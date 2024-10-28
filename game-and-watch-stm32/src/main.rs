@@ -57,17 +57,17 @@ fn main() -> ! {
 
     // Constrain and Freeze clock
     let rcc = dp.RCC.constrain();
-    let ccdr = rcc.sys_ck(150.MHz())
-        .pll1_q_ck(150.MHz())
-        .pll1_r_ck(150.MHz())
+    let ccdr = rcc.sys_ck(200.MHz())
+        .pll1_q_ck(200.MHz())
+        .pll1_r_ck(200.MHz())
 
         .pll2_p_ck(60.MHz())
-        .pll2_q_ck(150.MHz())
+        .pll2_q_ck(200.MHz())
         .pll2_r_ck(60.MHz())
 
 
-        .pll3_p_ck(150.MHz())
-        .pll3_q_ck(150.MHz())
+        .pll3_p_ck(200.MHz())
+        .pll3_q_ck(200.MHz())
         .pll3_r_ck(25.MHz())
 
         .freeze(pwrcfg, &dp.SYSCFG);
@@ -112,7 +112,6 @@ fn main() -> ! {
 
 
     let sck = gpiob.pb13.into_alternate();
-    let miso = gpioc.pc2.into_alternate();
     let mosi = gpiob.pb15.into_alternate();
     let cs = gpiob.pb12.into_push_pull_output();
 
@@ -125,7 +124,7 @@ fn main() -> ! {
     let reset = gpiod.pd8.into_push_pull_output();
 
 
-    let spi = dp.SPI2.spi((sck, miso, mosi), spi::MODE_0, 25.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
+    let spi = dp.SPI2.spi((sck, spi::NoMiso, mosi), spi::MODE_0, 15.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
 
     let mut ltdc = ltdc::Ltdc::new(dp.LTDC, ccdr.peripheral.LTDC, &ccdr.clocks);
     ltdc.init(
@@ -153,13 +152,15 @@ fn main() -> ! {
     let mut front_buffer = [0u16; lcd::WIDTH * lcd::HEIGHT];
     let mut back_buffer = [0u16; lcd::WIDTH * lcd::HEIGHT];
 
-    let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi, delay);
+    let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi, &mut delay);
+
     lcd.init();
 
     let mut disp = BufferedDisplay::new(layer, &mut front_buffer, &mut back_buffer, WIDTH, HEIGHT);
 
     info!("Initialised Display...");
     
+    delay.delay_ms(200u32);
 
     loop { 
         disp.layer(|draw| {

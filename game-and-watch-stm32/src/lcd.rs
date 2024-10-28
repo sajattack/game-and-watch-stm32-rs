@@ -3,9 +3,7 @@ pub const HEIGHT: usize = 240;
 
 use stm32h7xx_hal::{pac::SPI2, prelude::*, gpio::{Pin, Output, PushPull}, delay::{Delay}, spi, ltdc::{Ltdc, LtdcLayer1}};
 
-//use embedded_hal::delay::DelayMs;
-
-pub struct Lcd{
+pub struct Lcd<'a> {
     backlight1: Pin<'A', 4, Output<PushPull>>,
     backlight2: Pin<'A', 5, Output<PushPull>>,
     backlight3: Pin<'A', 6, Output<PushPull>>,
@@ -14,10 +12,10 @@ pub struct Lcd{
     reset: Pin<'D', 8, Output<PushPull>>,
     cs: Pin<'B', 12, Output<PushPull>>,
     spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-    delay: Delay
+    delay: &'a mut Delay
 }
 
-impl Lcd {
+impl<'a> Lcd<'a> {
     pub fn new(
         backlight1: Pin<'A', 4, Output<PushPull>>,
         backlight2: Pin<'A', 5, Output<PushPull>>,
@@ -27,7 +25,7 @@ impl Lcd {
         reset: Pin<'D', 8, Output<PushPull>>,
         cs: Pin<'B', 12, Output<PushPull>>,
         spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-        delay: Delay
+        delay: &'a mut Delay
     ) -> Self {
         Self {
             backlight1,
@@ -72,74 +70,73 @@ impl Lcd {
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x08, 0x80]).unwrap();
+        let _ = self.spi.write(&[0x08, 0x80]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x6e, 0x80]).unwrap();
+        let _ = self.spi.write(&[0x6e, 0x80]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x80, 0x80]).unwrap();
+        let _ = self.spi.write(&[0x80, 0x80]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x68, 0x00]).unwrap();
+        let _ = self.spi.write(&[0x68, 0x00]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0xd0, 0x00]).unwrap();
+        let _ = self.spi.write(&[0xd0, 0x00]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x1b, 0x00]).unwrap();
+        let _ = self.spi.write(&[0x1b, 0x00]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0xe0, 0x00]).unwrap();
+        let _ = self.spi.write(&[0xe0, 0x00]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x6a, 0x80]).unwrap();
+        let _ = self.spi.write(&[0x6a, 0x80]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x80, 0x00]).unwrap();
+        let _ = self.spi.write(&[0x80, 0x00]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x14, 0x80]).unwrap();
+        let _ = self.spi.write(&[0x14, 0x80]);
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
-
     }
 
     pub fn backlight_off(
