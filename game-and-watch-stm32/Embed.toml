@@ -1,0 +1,5 @@
+[default.general]
+chip="STM32H7B0VBTx"
+
+[default.rtt]
+enabled=true
