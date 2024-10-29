@@ -26,6 +26,7 @@ use panic_probe as _;
 
 #[macro_use]
 mod utilities_display;
+mod input;
 
 macro_rules! pins_alternate_high_speed {
     ($($func:ident:  $port:ident.$pin:ident:  $af:expr);*) => {
@@ -123,8 +124,19 @@ fn main() -> ! {
     let enable_1v8  = gpiod.pd4.into_push_pull_output();
     let reset = gpiod.pd8.into_push_pull_output();
 
-
     let spi = dp.SPI2.spi((sck, spi::NoMiso, mosi), spi::MODE_0, 15.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
+
+    let buttons = input::ButtonPins::new(
+       gpiod.pd11.into_input(),
+       gpiod.pd15.into_input(),
+       gpiod.pd0.into_input(),
+       gpiod.pd14.into_input(),
+       gpiod.pd9.into_input(),
+       gpiod.pd5.into_input(),
+       gpioc.pc1.into_input(),
+       gpioc.pc4.into_input(),
+       gpioc.pc13.into_input(),
+    );
 
     let mut ltdc = ltdc::Ltdc::new(dp.LTDC, ccdr.peripheral.LTDC, &ccdr.clocks);
     ltdc.init(
@@ -133,8 +145,8 @@ fn main() -> ! {
             active_height: HEIGHT as u16,
             h_back_porch: 200,
             h_front_porch: 430,
-            v_back_porch: 21,
-            v_front_porch: 1,
+            v_back_porch: 3,
+            v_front_porch: 3,
             h_sync: 10,
             v_sync: 2,
             h_sync_pol: false,
@@ -162,7 +174,22 @@ fn main() -> ! {
     
     delay.delay_ms(200u32);
 
+    let mut ferris_pos = Point::new(120, 125);
+
     loop { 
+        let button_state = buttons.read_debounced(&mut delay, 4);
+        if button_state.left {
+            ferris_pos.x -= 1;
+        }
+        if button_state.right {
+            ferris_pos.x += 1;
+        }
+        if button_state.up {
+            ferris_pos.y -= 1;
+        }
+        if button_state.down {
+            ferris_pos.y += 1;
+        }
         disp.layer(|draw| {
             draw.clear();
             draw.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
@@ -174,7 +201,9 @@ fn main() -> ! {
 
             let ferris: Bmp<Rgb565> =
                 Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
-            let ferris = Image::new(&ferris, Point::new(120, 125));
+            let ferris = Image::new(&ferris, ferris_pos);
+
+
             ferris.draw(draw).unwrap();
         });
         disp.swap_layer_wait();
