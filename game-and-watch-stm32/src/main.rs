@@ -96,7 +96,7 @@ async fn main(_spawner: Spawner) {
         })
     };
 
-    config.rcc.mux.spi123sel = Saisel::PLL3_P;
+    config.rcc.mux.spi123sel = Saisel::PLL2_P;
     
     pac::RCC.apb3enr().modify(|w| { w.set_ltdcen(true) });
 
@@ -114,7 +114,7 @@ async fn main(_spawner: Spawner) {
     let reset = Output::new(cp.PD8, Level::High, Speed::Low);
 
     let mut spi_config = SpiConfig::default();
-    spi_config.frequency = mhz(25);
+    spi_config.frequency = mhz(15);
 
     let spi = Spi::<Blocking>::new_blocking_txonly(
         cp.SPI2,
