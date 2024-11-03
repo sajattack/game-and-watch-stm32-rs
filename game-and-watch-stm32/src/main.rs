@@ -54,8 +54,8 @@ async fn main(_spawner: Spawner) {
 
     config.rcc.pll1 = Some(Pll {
         source: PllSource::HSI,
-        prediv: PllPreDiv::DIV32,
-        mul: PllMul::MUL200,
+        prediv: PllPreDiv::DIV16,
+        mul: PllMul::MUL140,
         divp: Some(PllDiv::DIV2),
         divq: Some(PllDiv::DIV2),
         divr: Some(PllDiv::DIV2),
@@ -63,19 +63,19 @@ async fn main(_spawner: Spawner) {
 
     config.rcc.pll2 = Some(Pll {
         source: PllSource::HSI,
-        prediv: PllPreDiv::DIV32,
-        mul: PllMul::MUL210,
-        divp: Some(PllDiv::DIV7),
+        prediv: PllPreDiv::DIV25,
+        mul: PllMul::MUL192,
+        divp: Some(PllDiv::DIV5),
         divq: Some(PllDiv::DIV2),
-        divr: Some(PllDiv::DIV7), 
+        divr: Some(PllDiv::DIV5), 
     });
     config.rcc.pll3 = Some(Pll {
         source: PllSource::HSI,
-        prediv: PllPreDiv::DIV32,
-        mul: PllMul::MUL200,
-        divp: Some(PllDiv::DIV8),
+        prediv: PllPreDiv::DIV4,
+        mul: PllMul::MUL9,
+        divp: Some(PllDiv::DIV2),
         divq: Some(PllDiv::DIV2), 
-        divr: Some(PllDiv::DIV2),
+        divr: Some(PllDiv::DIV24),
     });
 
     config.rcc.supply_config = SupplyConfig::LDO;
@@ -86,22 +86,12 @@ async fn main(_spawner: Spawner) {
     config.rcc.apb4_pre = APBPrescaler::DIV2;
     config.rcc.voltage_scale = VoltageScale::Scale0;
 
+    config.rcc.mux.sai1sel = Saisel::PLL2_P;
+    config.rcc.mux.spi123sel = Saisel::PLL3_P;
 
-    config.rcc.ls = LsConfig {
-        rtc: RtcClockSource::LSE,
-        lsi: true,
-        lse: Some(LseConfig {
-            frequency: hz(32768),
-            mode: LseMode::Oscillator(LseDrive::High)
-        })
-    };
-
-    config.rcc.mux.spi123sel = Saisel::PLL2_P;
+    pac::RCC.ahb1enr().modify(|w| { w.set_dma1en(true) });
     
-    pac::RCC.apb3enr().modify(|w| { w.set_ltdcen(true) });
-
     let cp = embassy_stm32::init(config);
-
 
     let cs = Output::new(cp.PB12, Level::High, Speed::Low);
 
@@ -114,7 +104,7 @@ async fn main(_spawner: Spawner) {
     let reset = Output::new(cp.PD8, Level::High, Speed::Low);
 
     let mut spi_config = SpiConfig::default();
-    spi_config.frequency = mhz(15);
+    spi_config.frequency = mhz(18);
 
     let spi = Spi::<Blocking>::new_blocking_txonly(
         cp.SPI2,
@@ -145,30 +135,51 @@ async fn main(_spawner: Spawner) {
     let pc13 = Input::new(cp.PC13, Pull::None);
 
 
-    let _ltdc_clk = Flex::new(cp.PB14).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_vsync = Flex::new(cp.PA7).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_hsync = Flex::new(cp.PC6).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_de = Flex::new(cp.PE13).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r7 = Flex::new(cp.PE15).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r6 = Flex::new(cp.PA8).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r5 = Flex::new(cp.PA9).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r4 = Flex::new(cp.PA11).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r3 = Flex::new(cp.PB0).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_r2 = Flex::new(cp.PC10).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g7 = Flex::new(cp.PD3).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g6 = Flex::new(cp.PC7).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g5 = Flex::new(cp.PB11).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g4 = Flex::new(cp.PB10).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g3 = Flex::new(cp.PC9).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_g2 = Flex::new(cp.PC0).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b7 = Flex::new(cp.PD2).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b6 = Flex::new(cp.PB8).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b5 = Flex::new(cp.PB5).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b4 = Flex::new(cp.PA10).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b3 = Flex::new(cp.PD10).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-    let _ltdc_b2 = Flex::new(cp.PD6).set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::VeryHigh));
-
-
+    let mut ltdc_clk = Flex::new(cp.PB14);
+        ltdc_clk.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_vsync = Flex::new(cp.PA7);
+        ltdc_vsync.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_hsync = Flex::new(cp.PC6);
+        ltdc_hsync.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_de = Flex::new(cp.PE13);
+        ltdc_de.set_high();
+        ltdc_de.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r7 = Flex::new(cp.PE15);
+        ltdc_r7.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r6 = Flex::new(cp.PA8);
+        ltdc_r6.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r5 = Flex::new(cp.PA9);
+        ltdc_r5.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r4 = Flex::new(cp.PA11);
+        ltdc_r4.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r3 = Flex::new(cp.PB0);
+        ltdc_r3.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_r2 = Flex::new(cp.PC10);
+        ltdc_r2.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g7 = Flex::new(cp.PD3);
+        ltdc_g7.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g6 = Flex::new(cp.PC7);
+        ltdc_g6.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g5 = Flex::new(cp.PB11);
+        ltdc_g5.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g4 = Flex::new(cp.PB10);
+        ltdc_g4.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g3 = Flex::new(cp.PC9);
+        ltdc_g3.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_g2 = Flex::new(cp.PC0);
+        ltdc_g2.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b7 = Flex::new(cp.PD2);
+        ltdc_b7.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b6 = Flex::new(cp.PB8);
+        ltdc_b6.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b5 = Flex::new(cp.PB5);
+        ltdc_b5.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b4 = Flex::new(cp.PA10);
+        ltdc_b4.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b3 = Flex::new(cp.PD10);
+        ltdc_b3.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
+    let mut ltdc_b2 = Flex::new(cp.PD6);
+        ltdc_b2.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
 
     defmt::info!("Clocks: 
         SPI2: {}
@@ -184,8 +195,6 @@ async fn main(_spawner: Spawner) {
 
     lcd.init().await;
 
-    Timer::after_millis(200).await;
-
     let mut ltdc = Ltdc::new(
         cp.LTDC
     );
@@ -194,7 +203,7 @@ async fn main(_spawner: Spawner) {
         active_width: WIDTH as u16,
         active_height: HEIGHT as u16,
         h_back_porch: 200,
-        h_front_porch: 430,
+        h_front_porch: 431,
         v_back_porch: 3,
         v_front_porch: 3,
         h_sync: 10,
@@ -216,7 +225,7 @@ async fn main(_spawner: Spawner) {
         window_y1: HEIGHT as u16,
     };
 
-    let mut layer = ltdc.init_layer(&layer_config, None);
+    ltdc.init_layer(&layer_config, None);
 
     let mut disp = DoubleBuffer::new(
         unsafe { FRONT_BUFFER.as_mut() } ,
@@ -226,6 +235,7 @@ async fn main(_spawner: Spawner) {
 
     info!("Initialised Display...");
     
+    Timer::after_millis(200).await;
 
     let mut ferris_pos = Point::new(120, 125);
 
@@ -258,6 +268,7 @@ async fn main(_spawner: Spawner) {
 
         ferris.draw(&mut disp).unwrap();
         disp.swap(&mut ltdc).await.unwrap();
+        //Timer::after_micros(16667).await;
    }
 }
 
