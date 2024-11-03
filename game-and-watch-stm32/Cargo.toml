@@ -5,16 +5,15 @@ edition = "2021"
 
 [dependencies]
 cfg-if = "1.0.0"
-cortex-m = "0.7.4"
+cortex-m = { version = "0.7.4", features = ["critical-section-single-core"] }
 defmt = "0.3.8"
 defmt-rtt = "0.4.1"
 embedded-graphics = "0.8.1"
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 panic-semihosting = "0.6.0"
-stm32h7xx-hal = { version = "0.16.0", features = ["stm32h7b3", "rt", "ltdc", "defmt"] }
+#stm32h7xx-hal = { version = "0.16.0", features = ["stm32h7b3", "rt", "ltdc", "defmt"] }
 stm32-fmc = { version = "0.3", optional = true }
-embassy-executor = "0.6.1"
 cortex-m-rt = "0.7.1"
 embedded-hal = "1.0.0"
 display-interface = "0.5.0"
@@ -22,3 +21,8 @@ embedded-graphics-core = "0.4.0"
 nb = "1.1.0"
 embedded-display-controller = "0.2.0"
 tinybmp = "0.6.0"
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy" , rev = "10c9fbcc99b564d8ece88b32835dbc78a4269b34", features = ["stm32h7b0vb", "rt",  "defmt", "unstable-pac", "time-driver-any", "memory-x"]}
+embassy-time = { git = "https://github.com/embassy-rs/embassy" , rev = "10c9fbcc99b564d8ece88b32835dbc78a4269b34", features = ["defmt", "tick-hz-32_768"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy" , rev = "10c9fbcc99b564d8ece88b32835dbc78a4269b34", features = ["defmt"] }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy" , rev = "10c9fbcc99b564d8ece88b32835dbc78a4269b34", features = ["defmt"] }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy" , rev = "10c9fbcc99b564d8ece88b32835dbc78a4269b34", features = ["task-arena-size-524288", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers"]}

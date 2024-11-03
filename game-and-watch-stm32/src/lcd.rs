@@ -1,31 +1,30 @@
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 240;
 
-use stm32h7xx_hal::{pac::SPI2, prelude::*, gpio::{Pin, Output, PushPull}, delay::{Delay}, spi, ltdc::{Ltdc, LtdcLayer1}};
+use embassy_stm32::{gpio::{Output}, spi::Spi, mode::Blocking};
+use embassy_time::{Timer};
 
 pub struct Lcd<'a> {
-    backlight1: Pin<'A', 4, Output<PushPull>>,
-    backlight2: Pin<'A', 5, Output<PushPull>>,
-    backlight3: Pin<'A', 6, Output<PushPull>>,
-    disable_3v3 : Pin<'D', 1, Output<PushPull>>,
-    enable_1v8: Pin<'D', 4, Output<PushPull>>,
-    reset: Pin<'D', 8, Output<PushPull>>,
-    cs: Pin<'B', 12, Output<PushPull>>,
-    spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-    delay: &'a mut Delay
+    backlight1: Output<'a>,
+    backlight2: Output<'a>,
+    backlight3: Output<'a>,
+    disable_3v3: Output<'a>,
+    enable_1v8: Output<'a>,
+    reset: Output<'a>,
+    cs: Output<'a>,
+    spi:  Spi<'a, Blocking>,
 }
 
 impl<'a> Lcd<'a> {
     pub fn new(
-        backlight1: Pin<'A', 4, Output<PushPull>>,
-        backlight2: Pin<'A', 5, Output<PushPull>>,
-        backlight3: Pin<'A', 6, Output<PushPull>>,
-        disable_3v3 : Pin<'D', 1, Output<PushPull>>,
-        enable_1v8: Pin<'D', 4, Output<PushPull>>,
-        reset: Pin<'D', 8, Output<PushPull>>,
-        cs: Pin<'B', 12, Output<PushPull>>,
-        spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-        delay: &'a mut Delay
+        backlight1: Output<'a>,
+        backlight2: Output<'a>,
+        backlight3: Output<'a>,
+        disable_3v3: Output<'a>,
+        enable_1v8: Output<'a>,
+        reset: Output<'a>,
+        cs: Output<'a>,
+        spi: Spi<'a, Blocking>,
     ) -> Self {
         Self {
             backlight1,
@@ -36,12 +35,11 @@ impl<'a> Lcd<'a> {
             reset,
             cs,
             spi,
-            delay,
         }
     }
 
 
-    pub fn init (
+    pub async fn init (
         &mut self
     )  {
         // reference impl https://github.com/ghidraninja/game-and-watch-base/blob/main/Core/Src/lcd.c 
@@ -58,85 +56,85 @@ impl<'a> Lcd<'a> {
         self.backlight_on();
         self.disable_3v3.set_low();
         self.enable_1v8.set_high();
-        self.delay.delay_ms(20u32);
+        Timer::after_millis(20).await;
 
         // boot sequence
         self.reset.set_high();
-        self.delay.delay_ms(1u32);
+        Timer::after_millis(1).await;
         self.reset.set_low();
-        self.delay.delay_ms(15u32);
+        Timer::after_millis(15).await;
         self.reset.set_high();
-        self.delay.delay_ms(1u32);
+        Timer::after_millis(1).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x08, 0x80]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x08u8, 0x80u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x6e, 0x80]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x6eu8, 0x80u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x80, 0x80]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x80u8, 0x80u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x68, 0x00]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x68u8, 0x00u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0xd0, 0x00]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0xd0u8, 0x00u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x1b, 0x00]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x1bu8, 0x00u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0xe0, 0x00]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0xe0u8, 0x00u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x6a, 0x80]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x6au8, 0x80u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x80, 0x00]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x80u8, 0x00u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
 
         self.cs.set_low();
-        self.delay.delay_ms(2u32);
-        let _ = self.spi.write(&[0x14, 0x80]);
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(&[0x14u8, 0x80u8]).unwrap();
+        Timer::after_millis(2).await;
         self.cs.set_high();
-        self.delay.delay_ms(2u32);
+        Timer::after_millis(2).await;
     }
 
     pub fn backlight_off(
