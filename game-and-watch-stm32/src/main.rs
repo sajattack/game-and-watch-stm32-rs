@@ -4,6 +4,9 @@
 mod lcd;
 use lcd::*;
 
+mod input;
+use input::*;
+
 use core::ptr::addr_of_mut;
 
 use cortex_m_rt::entry;
@@ -31,8 +34,9 @@ use embassy_stm32::{
 use embassy_stm32::spi::{self, Config as SpiConfig, Spi};
 use embassy_time::Timer;
 use embassy_executor::Spawner;
+use embassy_sync::{mutex::Mutex, blocking_mutex::raw::CriticalSectionRawMutex};
 
-use defmt::{info, error};
+use defmt::{info, error, debug};
 use defmt_rtt as _;
 use panic_probe as _;
 
@@ -43,8 +47,9 @@ bind_interrupts!(struct Irqs {
 static mut FRONT_BUFFER: [TargetPixelType; WIDTH * HEIGHT] = [0u16; WIDTH * HEIGHT];
 static mut BACK_BUFFER: [TargetPixelType; WIDTH * HEIGHT] = [0u16; WIDTH * HEIGHT];
 
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     info!("GAME & WATCH TEST");
 
     let mut config = Config::default();
@@ -113,28 +118,6 @@ async fn main(_spawner: Spawner) {
         spi_config 
     );
 
-    //let buttons = input::ButtonPins::new(
-       //gpiod.pd11.into_input(),
-       //gpiod.pd15.into_input(),
-       //gpiod.pd0.into_input(),
-       //gpiod.pd14.into_input(),
-       //gpiod.pd9.into_input(),
-       //gpiod.pd5.into_input(),
-       //gpioc.pc1.into_input(),
-       //gpioc.pc4.into_input(),
-       //gpioc.pc13.into_input(),
-    //);
-    let pd11 = Input::new(cp.PD11, Pull::None);
-    let pd15 = Input::new(cp.PD15, Pull::None);
-    let pd0 = Input::new(cp.PD0, Pull::None);
-    let pd14 = Input::new(cp.PD14, Pull::None);
-    let pd9 = Input::new(cp.PD9, Pull::None);
-    let pd5 = Input::new(cp.PD5, Pull::None);
-    let pc1 = Input::new(cp.PC1, Pull::None);
-    let pc4 = Input::new(cp.PC4, Pull::None);
-    let pc13 = Input::new(cp.PC13, Pull::None);
-
-
     let mut ltdc_clk = Flex::new(cp.PB14);
         ltdc_clk.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
     let mut ltdc_vsync = Flex::new(cp.PA7);
@@ -186,7 +169,7 @@ async fn main(_spawner: Spawner) {
         LTDC: {}",
         rcc::frequency::<peripherals::SPI2>(),
         rcc::frequency::<peripherals::LTDC>()
-        );
+    );
 
     defmt::info!("SPI2 Config: {:?}", spi.get_current_config().frequency);
 
@@ -237,22 +220,75 @@ async fn main(_spawner: Spawner) {
     
     Timer::after_millis(200).await;
 
+    let pd11 = Input::new(cp.PD11, Pull::Up);
+    let pd15 = Input::new(cp.PD15, Pull::Up);
+    let pd0 = Input::new(cp.PD0, Pull::Up);
+    let pd14 = Input::new(cp.PD14, Pull::Up);
+    let pd9 = Input::new(cp.PD9, Pull::Up);
+    let pd5 = Input::new(cp.PD5, Pull::Up);
+    let pc1 = Input::new(cp.PC1, Pull::Up);
+    let pc4 = Input::new(cp.PC4, Pull::Up);
+    let pc13 = Input::new(cp.PC13, Pull::Up);
+    let pa0 = Input::new(cp.PA0, Pull::Up);
+
+    let mut buttons = Buttons::new(
+        pd11,
+        pd15,
+        pd0,
+        pd14,
+        pd9,
+        pd5,
+        pc1,
+        pc4,
+        pc13,
+        pa0,
+    );
+
+    {
+        let mut br = BUTTON_READING_BUFFER.lock().await;
+        let buffer: [ButtonReading; BUTTON_BUFFER_SIZE] = [ButtonReading::default(); BUTTON_BUFFER_SIZE];
+        let mut bi = BUTTON_READING_INDEX.lock().await;
+        *bi = 0usize;
+        *br = Some(buffer);
+        *(BUTTONS.lock().await) = Some(buttons);
+    }
+
+    spawner.spawn(input_task()).unwrap();
+
     let mut ferris_pos = Point::new(120, 125);
+    let mut button_reading: Option<ButtonReading> = None;
 
     loop { 
-        //let button_state = buttons.read_debounced(&mut delay, 4);
-        //if button_state.left {
-            //ferris_pos.x -= 1;
-        //}
-        //if button_state.right {
-            //ferris_pos.x += 1;
-        //}
-        //if button_state.up {
-            //ferris_pos.y -= 1;
-        //}
-        //if button_state.down {
-            //ferris_pos.y += 1;
-        //}
+        {
+            let button_readings = BUTTON_READING_BUFFER.lock().await;
+            let mut button_buffer_index = BUTTON_READING_INDEX.lock().await;
+
+            debug!("INDEX: {}", *button_buffer_index);
+
+            if let Some(bb) = *button_readings {
+                if *button_buffer_index > 0 {
+                    button_reading = Some((bb)[*button_buffer_index-1]);
+                    *button_buffer_index -= 1;
+                }
+            }
+        }
+
+
+        if let Some(ref br) = button_reading {
+            if br.left {
+                ferris_pos.x -= 1;
+            }
+            if br.right {
+                ferris_pos.x += 1;
+            }
+            if br.up {
+                ferris_pos.y -= 1;
+            }
+            if br.down {
+                ferris_pos.y +=1;
+            }
+        }
+
         disp.clear();
         disp.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
         let text_style =
@@ -270,6 +306,34 @@ async fn main(_spawner: Spawner) {
         disp.swap(&mut ltdc).await.unwrap();
         //Timer::after_micros(16667).await;
    }
+}
+
+const BUTTON_BUFFER_SIZE: usize = 10;
+static BUTTONS: Mutex<CriticalSectionRawMutex, Option<Buttons>> = Mutex::new(None);
+static BUTTON_READING_BUFFER: Mutex<CriticalSectionRawMutex, Option<[ButtonReading; BUTTON_BUFFER_SIZE]>> = Mutex::new(None);
+static BUTTON_READING_INDEX: Mutex<CriticalSectionRawMutex, usize> = Mutex::new(0);
+
+#[embassy_executor::task]
+async fn input_task() {
+    loop {
+        debug!("INPUT TASK RUNNING");
+        {
+            let mut buttons = BUTTONS.lock().await;
+            let mut button_readings = BUTTON_READING_BUFFER.lock().await;
+            let mut button_buffer_index = BUTTON_READING_INDEX.lock().await;
+            if let Some(b) = buttons.as_mut() {
+                if let Some(br) = button_readings.as_mut() {
+                    (*br)[*button_buffer_index] = (*b).read();
+                    *button_buffer_index += 1;
+                    debug!("INPUT TASK POPULATED BUFFER");
+                    if *button_buffer_index >= BUTTON_BUFFER_SIZE {
+                        *button_buffer_index = 0;
+                    }
+                }
+            }
+        }
+        Timer::after_millis(8).await;
+    }
 }
 
 pub type TargetPixelType = u16;
