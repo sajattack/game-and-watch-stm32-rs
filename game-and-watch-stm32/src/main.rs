@@ -176,7 +176,7 @@ async fn main(spawner: Spawner) {
 
     let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi);
 
-    lcd.init().await;
+    lcd.init().await.unwrap();
 
     let mut ltdc = Ltdc::new(
         cp.LTDC
@@ -237,7 +237,7 @@ async fn main(spawner: Spawner) {
         *(BUTTONS.lock().await) = Some(buttons);
     }
 
-    spawner.spawn(input_task());
+    let _ = spawner.spawn(input_task());
 
     let mut ferris_pos = Point::new(120, 125);
     let mut br = ButtonReading::default();
