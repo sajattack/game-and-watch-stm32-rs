@@ -7,6 +7,9 @@ use lcd::*;
 mod input;
 use input::*;
 
+mod spiflash;
+use spiflash::*;
+
 use embedded_graphics::{
     prelude::*,
     image::Image, primitives::Rectangle, pixelcolor::Rgb565,
@@ -14,18 +17,11 @@ use embedded_graphics::{
     text::Text,
 };
 
+use mux::{Fmcsel, Persel};
 use tinybmp::Bmp;
 
 use embassy_stm32::{
-    Config, rcc::{*, SupplyConfig, mux::Saisel},
-    gpio::{Pull, Input, Output, Flex, Speed, Level, AfType, OutputType},
-    spi::{Config as SpiConfig, Spi},
-    ltdc::{self, Ltdc},
-    mode::Blocking,
-    peripherals,
-    time::mhz,
-    bind_interrupts,
-    pac,
+    bind_interrupts, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals, rcc::{mux::Saisel, SupplyConfig, *}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, PeripheralRef
 };
 
 use embassy_time::Timer;
@@ -47,6 +43,12 @@ static BUTTONS: Mutex<CriticalSectionRawMutex, Option<Buttons>> = Mutex::new(Non
 // this doesn't really need a mutex because it's only modified once but
 // it's better than making it static mut I suppose
 static FERRIS: Mutex<CriticalSectionRawMutex, Option<Bmp<Rgb565>>> = Mutex::new(None);
+static AUDIO_BUF: Mutex<CriticalSectionRawMutex, [u8; 44100]> = Mutex::new([0u8; 44100]);
+
+// Probe-rs fails to flash the extflash if I try this :(
+//#[used]
+//#[unsafe(link_section = "._extflash")]
+//static FLASH_DATA: [u8; 338598] = *include_bytes!("../assets/crab_rave.raw_s16le_pcm");
 
 struct GameState {
     pub ferris_pos: Point,
@@ -176,11 +178,11 @@ async fn main(spawner: Spawner) {
     config.rcc.apb4_pre = APBPrescaler::DIV2;
     config.rcc.voltage_scale = VoltageScale::Scale0;
 
+    config.rcc.mux.persel = Persel::HSI;
+    config.rcc.mux.octospisel = Fmcsel::PER;
     config.rcc.mux.sai1sel = Saisel::PLL2_P;
     config.rcc.mux.spi123sel = Saisel::PLL3_P;
 
-    pac::RCC.ahb1enr().modify(|w| { w.set_dma1en(true) });
-    
     let cp = embassy_stm32::init(config);
 
     // initialize lcd pins + spi
@@ -295,6 +297,23 @@ async fn main(spawner: Spawner) {
     {
         *(FERRIS.lock().await) = Some(Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap());
     }
+
+    // Initialize spi flash
+    // FIXME is there a way to avoid calling PeripheralRef::new on all of these?
+    let mut spiflash = SpiFlash::new(
+        PeripheralRef::new(cp.PB2),
+        PeripheralRef::new(cp.PB1),
+        PeripheralRef::new(cp.PD12),
+        PeripheralRef::new(cp.PE2),
+        PeripheralRef::new(cp.PA1),
+        PeripheralRef::new(cp.PE11),
+        PeripheralRef::new(cp.OCTOSPI1)
+    );
+    spiflash.init().await;
+
+    /*unsafe {
+        debug!("First word of spiflash: {=u32:x}", core::ptr::read_volatile(0x90000000 as *const u32));
+    }*/
 
     // Initialize state
     let mut gs = GameState::new();

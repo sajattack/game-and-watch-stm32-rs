@@ -6,3 +6,13 @@ MEMORY
   FLASH    (xr ) : ORIGIN = 0x8000000,  LENGTH = 128K
   EXTFLASH (xr ) : ORIGIN = 0x90000000, LENGTH = 1024K
 }
+
+SECTIONS
+{
+  ._extflash :
+  {
+    . = ALIGN(4);
+    _extflash = .;       /* define a global symbols to point at the external flash */
+    KEEP(*(._extflash))
+  } >EXTFLASH 
+}
