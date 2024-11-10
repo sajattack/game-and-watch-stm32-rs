@@ -136,6 +136,7 @@ async fn input_task() -> ! {
 async fn main(spawner: Spawner) {
     info!("GAME & WATCH TEST");
 
+    // initialize clocks
     let mut config = Config::default();
 
     config.rcc.hsi = Some(HSIPrescaler::DIV1);
@@ -182,6 +183,7 @@ async fn main(spawner: Spawner) {
     
     let cp = embassy_stm32::init(config);
 
+    // initialize lcd pins + spi
     let cs = Output::new(cp.PB12, Level::High, Speed::Low);
 
     let pa4 = Output::new(cp.PA4, Level::Low, Speed::Low);
@@ -202,6 +204,7 @@ async fn main(spawner: Spawner) {
         spi_config 
     );
 
+    // initialize ltdc pins
     let mut ltdc_clk = Flex::new(cp.PB14);
         ltdc_clk.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
     let mut ltdc_vsync = Flex::new(cp.PA7);
@@ -270,6 +273,7 @@ async fn main(spawner: Spawner) {
 
     Timer::after_millis(200).await;
 
+    // initialize buttons
     let buttons: Buttons = ButtonPins::new(
         Input::new(cp.PD11, Pull::None), // I think these have hardware pullups already
         Input::new(cp.PD15, Pull::None),
@@ -283,7 +287,6 @@ async fn main(spawner: Spawner) {
         Input::new(cp.PA0,  Pull::None)
     ).into();
 
-    // Initialize static button struct
     {
         *(BUTTONS.lock().await) = Some(buttons);
     }

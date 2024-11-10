@@ -45,6 +45,36 @@ impl<'a> Lcd<'a> {
         }
     }
 
+    async fn spi_write(&mut self, buf: &[u8]) -> Result<(), spi::Error> {
+        self.cs.set_low();
+        Timer::after_millis(2).await;
+        self.spi.blocking_write(buf)?;
+        Timer::after_millis(2).await;
+        self.cs.set_high();
+        Timer::after_millis(2).await;
+        Ok(())
+    }
+
+    async fn reset(&mut self) {
+        self.reset.set_high();
+        Timer::after_millis(1).await;
+        self.reset.set_low();
+        Timer::after_millis(15).await;
+        self.reset.set_high();
+        Timer::after_millis(1).await;
+    }
+
+    pub fn power_off(&mut self) {
+        self.set_backlight_off();
+        self.disable_3v3.set_high();
+        self.enable_1v8.set_low();
+    }
+
+    pub fn power_on(&mut self) {
+        self.set_backlight_on();
+        self.disable_3v3.set_low();
+        self.enable_1v8.set_high();
+    }
 
     pub async fn init (
         &mut self
@@ -53,98 +83,22 @@ impl<'a> Lcd<'a> {
         // other reference impl that makes a bit more sense 
         // https://github.com/kbeckmann/game-and-watch-retro-go/blob/main/Core/Src/gw_lcd.c
 
-        // turn everything off
-        self.set_backlight_off();
         self.cs.set_high();
-        self.disable_3v3.set_high();
-        self.enable_1v8.set_low();
-
-
-        self.reset.set_low();
-
-        // turn everything back on
-        self.set_backlight_on();
-        self.disable_3v3.set_low();
-        self.enable_1v8.set_high();
+        self.power_off();
+        self.power_on();
         Timer::after_millis(20).await;
+        self.reset().await;
 
-        // boot sequence
-        self.reset.set_high();
-        Timer::after_millis(1).await;
-        self.reset.set_low();
-        Timer::after_millis(15).await;
-        self.reset.set_high();
-        Timer::after_millis(1).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x08u8, 0x80u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x6eu8, 0x80u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x80u8, 0x80u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x68u8, 0x00u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0xd0u8, 0x00u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x1bu8, 0x00u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0xe0u8, 0x00u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x6au8, 0x80u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x80u8, 0x00u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
-
-        self.cs.set_low();
-        Timer::after_millis(2).await;
-        self.spi.blocking_write(&[0x14u8, 0x80u8])?;
-        Timer::after_millis(2).await;
-        self.cs.set_high();
-        Timer::after_millis(2).await;
+        self.spi_write(&[0x08, 0x80]).await?;
+        self.spi_write(&[0x6e, 0x80]).await?;
+        self.spi_write(&[0x80, 0x80]).await?;
+        self.spi_write(&[0x68, 0x00]).await?;
+        self.spi_write(&[0xd0, 0x00]).await?;
+        self.spi_write(&[0x1b, 0x00]).await?;
+        self.spi_write(&[0xe0, 0x00]).await?;
+        self.spi_write(&[0x6a, 0x80]).await?;
+        self.spi_write(&[0x80, 0x00]).await?;
+        self.spi_write(&[0x14, 0x80]).await?;
 
         Ok(())
     }
