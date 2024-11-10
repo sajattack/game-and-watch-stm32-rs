@@ -7,30 +7,27 @@ use lcd::*;
 mod input;
 use input::*;
 
-
-use cortex_m_rt::entry;
-
-use embedded_graphics::{image::Image, primitives::Rectangle, pixelcolor::Rgb565};
-use embedded_graphics::mono_font::{ascii, MonoTextStyle};
-use embedded_graphics::prelude::*;
-use embedded_graphics::text::Text;
+use embedded_graphics::{
+    prelude::*,
+    image::Image, primitives::Rectangle, pixelcolor::Rgb565,
+    mono_font::{ascii, MonoTextStyle},
+    text::Text,
+};
 
 use tinybmp::Bmp;
 
 use embassy_stm32::{
-    Config, rcc::{self, *, SupplyConfig, mux::Saisel},
-    gpio::{self, Pull, Input, Output, Flex, Speed, Level, AfType, OutputType},
-    Peripherals,
-    ltdc::{self, Ltdc, PolarityEdge, PolarityActive, LtdcConfiguration, LtdcLayerConfig},
+    Config, rcc::{*, SupplyConfig, mux::Saisel},
+    gpio::{Pull, Input, Output, Flex, Speed, Level, AfType, OutputType},
+    spi::{Config as SpiConfig, Spi},
+    ltdc::{self, Ltdc},
     mode::Blocking,
     peripherals,
-    time::{Hertz, hz, mhz},
+    time::mhz,
     bind_interrupts,
-    interrupt::{self, typelevel::LTDC},
     pac,
 };
 
-use embassy_stm32::spi::{self, Config as SpiConfig, Spi};
 use embassy_time::Timer;
 use embassy_executor::Spawner;
 use embassy_sync::{mutex::Mutex, blocking_mutex::raw::CriticalSectionRawMutex};
@@ -45,8 +42,95 @@ bind_interrupts!(struct Irqs {
 
 static mut FRONT_BUFFER: [TargetPixelType; WIDTH * HEIGHT] = [0u16; WIDTH * HEIGHT];
 static mut BACK_BUFFER: [TargetPixelType; WIDTH * HEIGHT] = [0u16; WIDTH * HEIGHT];
-
 static BUTTONS: Mutex<CriticalSectionRawMutex, Option<Buttons>> = Mutex::new(None);
+
+// this doesn't really need a mutex because it's only modified once but
+// it's better than making it static mut I suppose
+static FERRIS: Mutex<CriticalSectionRawMutex, Option<Bmp<Rgb565>>> = Mutex::new(None);
+
+struct GameState {
+    pub ferris_pos: Point,
+    pub button_reading: Option<ButtonReading>,
+    pub button_clicks: Option<ButtonClick>,
+}
+
+impl GameState {
+    pub fn new() -> Self
+    {
+        Self {
+            ferris_pos: Point::new(120, 125),
+            button_reading: None,
+            button_clicks: None,
+        }
+    }
+}
+
+async fn draw(gs: &GameState, display: &mut DoubleBuffer<'_>)
+{
+    display.clear();
+    display.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
+    let text_style =
+        MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
+    Text::new("Hello Rust!", Point::new(120, 100), text_style)
+        .draw(display)
+        .unwrap();
+
+    {
+        let ferris = FERRIS.lock().await;
+        if let Some(f) = *ferris {
+            let ferris_img = Image::new(&f, gs.ferris_pos);
+            ferris_img.draw(display).unwrap();
+        }
+    }
+}
+
+async fn update(gs: &mut GameState, lcd: &mut Lcd<'_>) {
+    {
+        // read input state
+        // MUTEX HELD!
+        let mut buttons = BUTTONS.lock().await;
+        if let Some(b) = buttons.as_mut() {
+            gs.button_reading = Some(b.raw_read_all());
+            gs.button_clicks = Some(b.read_clicks());
+            b.reset_all();
+        }
+    }
+
+    if let Some(button_state) = gs.button_reading {
+        if button_state.left.is_held() {
+            gs.ferris_pos.x -= 1;
+        }
+        if button_state.right.is_held() {
+            gs.ferris_pos.x += 1;
+        }
+        if button_state.up.is_held() {
+            gs.ferris_pos.y -= 1;
+        }
+        if button_state.down.is_held() {
+            gs.ferris_pos.y +=1;
+        }
+    }
+
+    if let Some(clicks) = gs.button_clicks {
+        if clicks.power {
+            lcd.toggle_backlight();
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn input_task() -> ! {
+    loop {
+        {
+            let mut buttons = BUTTONS.lock().await;
+            if let Some(b) = buttons.as_mut()
+            {
+                b.tick_all();
+            }
+        }
+        Timer::after_micros(500).await;
+    }
+}
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -164,16 +248,6 @@ async fn main(spawner: Spawner) {
     let mut ltdc_b2 = Flex::new(cp.PD6);
         ltdc_b2.set_as_af_unchecked(14, AfType::output(OutputType::PushPull, Speed::High));
 
-    defmt::info!("Clocks: 
-        SPI2: {}
-        LTDC: {}",
-        rcc::frequency::<peripherals::SPI2>(),
-        rcc::frequency::<peripherals::LTDC>()
-    );
-
-    defmt::info!("SPI2 Config: {:?}", spi.get_current_config().frequency);
-
-
     let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi);
 
     lcd.init().await.unwrap();
@@ -182,46 +256,22 @@ async fn main(spawner: Spawner) {
         cp.LTDC
     );
 
-    let ltdc_config = LtdcConfiguration {
-        active_width: WIDTH as u16,
-        active_height: HEIGHT as u16,
-        h_back_porch: 200,
-        h_front_porch: 431,
-        v_back_porch: 3,
-        v_front_porch: 3,
-        h_sync: 10,
-        v_sync: 2,
-        h_sync_polarity: PolarityActive::ActiveLow,
-        v_sync_polarity: PolarityActive::ActiveLow,
-        data_enable_polarity: PolarityActive::ActiveLow,
-        pixel_clock_polarity: PolarityEdge::FallingEdge,
-    };
+    ltdc.init(&LTDC_CONFIG);
 
-    ltdc.init(&ltdc_config);
-
-    let layer_config = LtdcLayerConfig {
-        pixel_format: ltdc::PixelFormat::RGB565,
-        layer: ltdc::LtdcLayer::Layer1,
-        window_x0: 0,
-        window_x1: WIDTH as u16,
-        window_y0: 0,
-        window_y1: HEIGHT as u16,
-    };
-
-    ltdc.init_layer(&layer_config, None);
+    ltdc.init_layer(&LTDC_LAYER_CONFIG, None);
 
     let mut disp = DoubleBuffer::new(
         unsafe { FRONT_BUFFER.as_mut() } ,
         unsafe { BACK_BUFFER.as_mut() } ,
-        layer_config
+        LTDC_LAYER_CONFIG
     );
 
     info!("Initialised Display...");
-    
+
     Timer::after_millis(200).await;
 
     let buttons: Buttons = ButtonPins::new(
-        Input::new(cp.PD11, Pull::None),
+        Input::new(cp.PD11, Pull::None), // I think these have hardware pullups already
         Input::new(cp.PD15, Pull::None),
         Input::new(cp.PD0,  Pull::None),
         Input::new(cp.PD14,  Pull::None),
@@ -233,173 +283,28 @@ async fn main(spawner: Spawner) {
         Input::new(cp.PA0,  Pull::None)
     ).into();
 
+    // Initialize static button struct
     {
         *(BUTTONS.lock().await) = Some(buttons);
     }
 
+    // Initialize static ferris struct
+    {
+        *(FERRIS.lock().await) = Some(Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap());
+    }
+
+    // Initialize state
+    let mut gs = GameState::new();
+
+    // start polling for input asynchronously
     spawner.spawn(input_task()).unwrap();
 
-    let mut ferris_pos = Point::new(120, 125);
-    let mut button_reading = None;
-    let mut button_clicks = None;
-    let mut backlight_state = true;
-
+    // main loop
     loop { 
-        {
-            let mut buttons = BUTTONS.lock().await;
-            if let Some(b) = buttons.as_mut() {
-                button_reading = Some(b.raw_read_all());
-                button_clicks = Some(b.read_clicks());
-                b.reset_all();
-            }
-        }
-
-        if let Some(button_state) = button_reading {
-            if button_state.left.is_held() {
-                ferris_pos.x -= 1;
-            }
-            if button_state.right.is_held() {
-                ferris_pos.x += 1;
-            }
-            if button_state.up.is_held() {
-                ferris_pos.y -= 1;
-            }
-            if button_state.down.is_held() {
-                ferris_pos.y +=1;
-            }
-        }
-
-        if let Some(clicks) = button_clicks {
-            if clicks.power && backlight_state {
-                lcd.backlight_off();
-                backlight_state = !backlight_state;
-            } else if clicks.power && !backlight_state {
-                lcd.backlight_on();
-                backlight_state = !backlight_state;
-            }
-        }
-
-        disp.clear();
-        disp.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
-        let text_style =
-            MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
-        Text::new("Hello Rust!", Point::new(120, 100), text_style)
-            .draw(&mut disp)
-            .unwrap();
-
-        let ferris: Bmp<Rgb565> =
-            Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
-        let ferris = Image::new(&ferris, ferris_pos);
-
-
-        ferris.draw(&mut disp).unwrap();
+        update(&mut gs, &mut lcd).await; 
+        draw(&gs, &mut disp).await;
         disp.swap(&mut ltdc).await.unwrap();
    }
 }
 
-#[embassy_executor::task]
-pub async fn input_task() -> ! {
-    loop {
-        {
-            let mut buttons = BUTTONS.lock().await;
-            if let Some(b) = buttons.as_mut()
-            {
-                b.tick_all();
-            }
-        }
-        Timer::after_micros(500).await;
-    }
-}
-
-pub type TargetPixelType = u16;
-
-// A simple double buffer
-pub struct DoubleBuffer<'a> {
-    buf0: &'a mut [TargetPixelType],
-    buf1: &'a mut [TargetPixelType],
-    is_buf0: bool,
-    layer_config: LtdcLayerConfig,
-}
-
-impl<'a> DoubleBuffer<'a> {
-    pub fn new(
-        buf0: &'a mut [TargetPixelType],
-        buf1: &'a mut [TargetPixelType],
-        layer_config: LtdcLayerConfig,
-    ) -> Self {
-        Self {
-            buf0,
-            buf1,
-            is_buf0: true,
-            layer_config,
-        }
-    }
-
-    pub fn current(&mut self) -> &mut [TargetPixelType] {
-        if self.is_buf0 {
-            self.buf0
-        } else {
-            self.buf1
-        }
-    }
-
-    pub async fn swap<T: ltdc::Instance>(&mut self, ltdc: &mut Ltdc<'_, T>) -> Result<(), ltdc::Error> {
-        let buf = self.current();
-        let frame_buffer = buf.as_ptr();
-        self.is_buf0 = !self.is_buf0;
-        ltdc.set_buffer(self.layer_config.layer, frame_buffer as *const _).await
-    }
-
-    /// Clears the buffer
-    pub fn clear(&mut self) {
-        let buf = self.current();
-        let black = Rgb565::new(0, 0, 0).into_storage();
-
-        for a in buf.iter_mut() {
-            *a = black; // solid black
-        }
-    }
-}
-
-// Implement DrawTarget for
-impl<'a> DrawTarget for DoubleBuffer<'a> {
-    type Color = Rgb565;
-    type Error = ();
-
-    /// Draw a pixel
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        let size = self.size();
-        let width = size.width as i32;
-        let height = size.height as i32;
-        let buf = self.current();
-
-        for pixel in pixels {
-            let Pixel(point, color) = pixel;
-
-            if point.x >= 0 && point.y >= 0 && point.x < width && point.y < height {
-                let index = point.y * width + point.x;
-                let raw_color = color.into_storage();
-                buf[index as usize] = raw_color;
-            } else {
-                // Ignore invalid points
-                defmt::error!("Invalid address");
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl<'a> OriginDimensions for DoubleBuffer<'a> {
-    /// Return the size of the display
-    fn size(&self) -> Size {
-        Size::new(
-            (self.layer_config.window_x1 - self.layer_config.window_x0) as _,
-            (self.layer_config.window_y1 - self.layer_config.window_y0) as _,
-        )
-    }
-}
 

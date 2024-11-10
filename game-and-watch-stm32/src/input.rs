@@ -1,14 +1,11 @@
 use embassy_stm32::{
     gpio::Input,
-    peripherals::{PD11, PD15, PD0, PD14, PD9, PD5, PC1, PC4, PC13, PA0}
+    //peripherals::{PD11, PD15, PD0, PD14, PD9, PD5, PC1, PC4, PC13, PA0}
 };
-
-use embedded_hal::digital::InputPin;
 
 use embassy_time::{Instant, Duration};
 
-use button_driver::{Button, ButtonConfig, InstantProvider, Mode, State};
-
+use button_driver::{Button, ButtonConfig, Mode, State};
 
 // FIXME Pin type safety
 
