@@ -7,9 +7,8 @@ use embedded_hal::digital::InputPin;
 
 use embassy_time::{Instant, Duration};
 
-use button_driver::{Button, InstantProvider, ButtonConfig, Mode};
+use button_driver::{Button, ButtonConfig, InstantProvider, Mode, State};
 
-use core::default::Default;
 
 // FIXME Pin type safety
 
@@ -96,47 +95,82 @@ impl <'a> Buttons <'a> {
         self.power.reset();
     }
 
-    pub fn read_all(&mut self) -> ButtonReading {
+    pub fn raw_read_all(&mut self) -> ButtonReading {
         ButtonReading {
-            left: self.left.raw_state().is_held(),
-            right: self.right.raw_state().is_held(),
-            up: self.up.raw_state().is_held(),
-            down: self.down.raw_state().is_held(),
-            a: self.a.raw_state().is_held(),
-            b: self.b.raw_state().is_held(),
-            game: self.game.raw_state().is_held(),
-            time: self.time.raw_state().is_held(),
-            pause: self.pause.raw_state().is_held(),
-            power: self.power.raw_state().is_held(),
+            left: self.left.raw_state().clone(),
+            right: self.right.raw_state().clone(),
+            up: self.up.raw_state().clone(),
+            down: self.down.raw_state().clone(),
+            a: self.a.raw_state().clone(),
+            b: self.b.raw_state().clone(),
+            game: self.game.raw_state().clone(),
+            time: self.time.raw_state().clone(),
+            pause: self.pause.raw_state().clone(),
+            power: self.power.raw_state().clone(),
         }
+    }
+
+    pub fn read_clicks(&mut self) -> ButtonClick {
+       ButtonClick {
+            left: self.left.is_clicked(),
+            right: self.right.is_clicked(),
+            up: self.up.is_clicked(),
+            down: self.down.is_clicked(),
+            a: self.a.is_clicked(), 
+            b: self.b.is_clicked(),
+            time: self.time.is_clicked(),
+            game: self.game.is_clicked(), 
+            pause: self.pause.is_clicked(), 
+            power: self.power.is_clicked(), 
+       }
     }
 }
 
 impl<'a> From<ButtonPins<'a>> for Buttons<'a> {
     fn from(value: ButtonPins<'a>) -> Self {
-        let config = ButtonConfig::<Duration> {
+        let fast_config = ButtonConfig::<Duration> {
             mode: Mode::PullUp,
-            hold: Duration::from_millis(16),
-            release: Duration::from_millis(8),
+            hold: Duration::from_millis(100),
+            release: Duration::from_millis(50),
             ..Default::default()
         };
+
+        let slow_config = ButtonConfig::<Duration> {
+            mode: Mode::PullUp,
+            ..Default::default()
+        };
+
         Self {
-            left: Button::new(value.left, config),
-            right: Button::new(value.right, config),
-            up: Button::new(value.up, config),
-            down: Button::new(value.down, config),
-            a:  Button::new(value.a, config),
-            b: Button::new(value.b, config),
-            game: Button::new(value.game, config),
-            time: Button::new(value.time, config),
-            pause: Button::new(value.pause, config),
-            power: Button::new(value.power, config),
+            left: Button::new(value.left, fast_config),
+            right: Button::new(value.right, fast_config),
+            up: Button::new(value.up, fast_config),
+            down: Button::new(value.down, fast_config),
+            a:  Button::new(value.a, fast_config),
+            b: Button::new(value.b, fast_config),
+            game: Button::new(value.game, slow_config),
+            time: Button::new(value.time, slow_config),
+            pause: Button::new(value.pause, slow_config),
+            power: Button::new(value.power, slow_config),
         }
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ButtonReading {
+    pub left: State<Instant>,
+    pub right: State<Instant>,
+    pub up: State<Instant>,
+    pub down:  State<Instant>,
+    pub a: State<Instant>,
+    pub b: State<Instant>,
+    pub time: State<Instant>,
+    pub game:  State<Instant>,
+    pub pause: State<Instant>,
+    pub power: State<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct ButtonClick {
     pub left: bool,
     pub right: bool,
     pub up: bool,

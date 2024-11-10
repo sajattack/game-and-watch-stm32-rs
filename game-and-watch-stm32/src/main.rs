@@ -237,30 +237,46 @@ async fn main(spawner: Spawner) {
         *(BUTTONS.lock().await) = Some(buttons);
     }
 
-    let _ = spawner.spawn(input_task());
+    spawner.spawn(input_task()).unwrap();
 
     let mut ferris_pos = Point::new(120, 125);
-    let mut br = ButtonReading::default();
+    let mut button_reading = None;
+    let mut button_clicks = None;
+    let mut backlight_state = true;
 
     loop { 
         {
             let mut buttons = BUTTONS.lock().await;
             if let Some(b) = buttons.as_mut() {
-                br = b.read_all();
+                button_reading = Some(b.raw_read_all());
+                button_clicks = Some(b.read_clicks());
+                b.reset_all();
             }
         }
 
-        if br.left {
-            ferris_pos.x -= 1;
+        if let Some(button_state) = button_reading {
+            if button_state.left.is_held() {
+                ferris_pos.x -= 1;
+            }
+            if button_state.right.is_held() {
+                ferris_pos.x += 1;
+            }
+            if button_state.up.is_held() {
+                ferris_pos.y -= 1;
+            }
+            if button_state.down.is_held() {
+                ferris_pos.y +=1;
+            }
         }
-        if br.right {
-            ferris_pos.x += 1;
-        }
-        if br.up {
-            ferris_pos.y -= 1;
-        }
-        if br.down {
-            ferris_pos.y +=1;
+
+        if let Some(clicks) = button_clicks {
+            if clicks.power && backlight_state {
+                lcd.backlight_off();
+                backlight_state = !backlight_state;
+            } else if clicks.power && !backlight_state {
+                lcd.backlight_on();
+                backlight_state = !backlight_state;
+            }
         }
 
         disp.clear();
@@ -278,7 +294,6 @@ async fn main(spawner: Spawner) {
 
         ferris.draw(&mut disp).unwrap();
         disp.swap(&mut ltdc).await.unwrap();
-        Timer::after_micros(16667).await;
    }
 }
 
