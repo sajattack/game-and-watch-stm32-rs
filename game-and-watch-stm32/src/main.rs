@@ -2,6 +2,7 @@
 #![no_std]
 
 mod lcd;
+use grounded::uninit::GroundedArrayCell;
 use lcd::*;
 
 mod input;
@@ -21,7 +22,7 @@ use mux::{Fmcsel, Persel};
 use tinybmp::Bmp;
 
 use embassy_stm32::{
-    bind_interrupts, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals, rcc::{mux::Saisel, SupplyConfig, *}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, PeripheralRef
+    bind_interrupts, dma::Channel, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals::{self, SAI1}, rcc::{mux::Saisel, SupplyConfig, *}, sai::{self, Dma, FsPin, MuteValue, Sai, SckPin, SdPin, SubBlock}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, Peripheral, PeripheralRef
 };
 
 use embassy_time::Timer;
@@ -43,12 +44,21 @@ static BUTTONS: Mutex<CriticalSectionRawMutex, Option<Buttons>> = Mutex::new(Non
 // this doesn't really need a mutex because it's only modified once but
 // it's better than making it static mut I suppose
 static FERRIS: Mutex<CriticalSectionRawMutex, Option<Bmp<Rgb565>>> = Mutex::new(None);
-static AUDIO_BUF: Mutex<CriticalSectionRawMutex, [u8; 44100]> = Mutex::new([0u8; 44100]);
+
+static SAI_RESOURCES: Mutex<CriticalSectionRawMutex, Option<SaiResources>> = Mutex::new(None);
+
+const HALF_DMA_BUFFER_LENGTH: usize = 1024;
+const DMA_BUFFER_LENGTH: usize = HALF_DMA_BUFFER_LENGTH * 2;
+const SAMPLE_RATE: u32 = 48000;
+
+#[link_section = ".sram1_bss"]
+static mut TX_BUFFER: GroundedArrayCell<u16, DMA_BUFFER_LENGTH> = GroundedArrayCell::uninit();
 
 // Probe-rs fails to flash the extflash if I try this :(
 //#[used]
 //#[unsafe(link_section = "._extflash")]
 //static FLASH_DATA: [u8; 338598] = *include_bytes!("../assets/crab_rave.raw_s16le_pcm");
+
 
 struct GameState {
     pub ferris_pos: Point,
@@ -132,6 +142,126 @@ async fn input_task() -> ! {
         }
         Timer::after_micros(500).await;
     }
+}
+
+#[embassy_executor::task]
+async fn audio_tx_task(
+) -> !
+{
+
+    //let audio_data = unsafe {
+        //core::slice::from_raw_parts(
+            //0x90000000 as *const u16,
+            //368542/2
+        //)
+    //};
+
+    let mut resources = SAI_RESOURCES.lock().await;  
+    if let Some(r) = resources.as_mut() {
+        let mut audio_pos: usize = 0;
+
+        let mut tx_buffer: &mut [u16] = unsafe {
+            let buf = &mut *core::ptr::addr_of_mut!(TX_BUFFER);
+            buf.initialize_all_copied(0);
+            let (ptr, len) = buf.get_ptr_len();
+            core::slice::from_raw_parts_mut(ptr, len)
+        };
+
+        let mut sai_transmitter = new_sai(r, tx_buffer);
+
+        sai_transmitter.set_mute(false);
+
+        let mut audio_data = [0u16; HALF_DMA_BUFFER_LENGTH];
+
+        loop {
+            debug!("audio pos {}", audio_pos);
+            for i in 0..audio_data.len()-1 {
+                audio_data[i] = unsafe { core::ptr::read_volatile((0x90000000 + audio_pos + i) as *const _) };
+                pac::OCTOSPI1.fcr().write(|w| 
+                    {
+                        w.set_ctcf(true);
+                        w.set_ctef(true);
+                        w.set_csmf(true);
+                        w.set_ctof(true)
+                    }
+                );
+                //while pac::OCTOSPI1.sr().read().busy() {
+                    //core::hint::spin_loop();
+                //}
+            }
+
+            debug!("sample data: {}", audio_data[0..10]);
+
+            let result = sai_transmitter.write(&audio_data).await;
+            if let Err(e) = result {
+                error!("{}", e);
+                drop(sai_transmitter);
+                sai_transmitter = new_sai(r, tx_buffer);
+                sai_transmitter.set_mute(false);
+            }
+
+
+            if audio_pos < 368542/2 - HALF_DMA_BUFFER_LENGTH*2{
+                audio_pos += HALF_DMA_BUFFER_LENGTH;
+            }
+            else 
+            {
+                audio_pos = 0
+            }
+        }
+    }
+    loop{}
+}
+
+pub struct SaiResources {
+    pub sai: peripherals::SAI1,
+    pub sck: peripherals::PE5,
+    pub sd: peripherals::PE6,
+    pub fs: peripherals::PE4,
+    pub dma: peripherals::DMA1_CH0,
+}
+
+fn new_sai<'d>(
+    resources: &'d mut SaiResources,
+    tx_buffer: &'d mut [u16],
+) -> sai::Sai<'d, peripherals::SAI1, u16>
+ {
+    let kernel_clock = frequency::<peripherals::SAI1>().0;
+    let mclk_div = mclk_div_from_u8((kernel_clock / (SAMPLE_RATE * 256)) as u8);
+
+    let mut tx_config = sai::Config::default();
+    tx_config.mode = sai::Mode::Master;
+    tx_config.tx_rx = sai::TxRx::Transmitter;
+    tx_config.sync_output = false;
+    tx_config.output_drive = sai::OutputDrive::Immediately;
+    tx_config.master_clock_divider = mclk_div;
+    tx_config.stereo_mono = sai::StereoMono::Mono;
+    tx_config.data_size = sai::DataSize::Data16;
+    tx_config.bit_order = sai::BitOrder::MsbFirst;
+    tx_config.frame_length = 64;
+    tx_config.frame_sync_polarity = sai::FrameSyncPolarity::ActiveHigh;
+    tx_config.frame_sync_offset = sai::FrameSyncOffset::OnFirstBit;
+    tx_config.frame_sync_active_level_length = embassy_stm32::sai::word::U7(32);
+    tx_config.fifo_threshold = sai::FifoThreshold::Quarter;
+    tx_config.slot_enable = 65535;
+    tx_config.protocol = sai::Protocol::Free;
+    tx_config.companding = sai::Companding::None;
+    tx_config.is_high_impedance_on_inactive_slot = false;
+    tx_config.clock_strobe = sai::ClockStrobe::Rising;
+
+
+    let sai_transmitter = Sai::new_asynchronous(
+        sai::split_subblocks(&mut resources.sai).0,
+        &mut resources.sck,
+        &mut resources.sd,
+        &mut resources.fs,
+        &mut resources.dma,
+        tx_buffer,
+        tx_config
+    );
+
+
+    sai_transmitter
 }
 
 #[embassy_executor::main]
@@ -311,9 +441,28 @@ async fn main(spawner: Spawner) {
     );
     spiflash.init().await;
 
-    /*unsafe {
+    unsafe {
         debug!("First word of spiflash: {=u32:x}", core::ptr::read_volatile(0x90000000 as *const u32));
-    }*/
+    }
+
+    debug!("SAI FREQ: {}", embassy_stm32::rcc::frequency::<peripherals::SAI1>());
+
+    debug!("Freq bit: {}", pac::SAI1.ch(0).sr().read().freq());
+
+
+    let mut resources = SaiResources {
+        sai: cp.SAI1,
+        sck: cp.PE5,
+        sd: cp.PE6,
+        fs: cp.PE4,
+        dma: cp.DMA1_CH0,
+    };
+
+    *(SAI_RESOURCES.lock().await) = Some(resources);
+
+    let audio_enable = Output::new(cp.PE3, Level::High, Speed::Low);
+
+    spawner.spawn(audio_tx_task()).unwrap(); 
 
     // Initialize state
     let mut gs = GameState::new();
@@ -326,7 +475,76 @@ async fn main(spawner: Spawner) {
         update(&mut gs, &mut lcd).await; 
         draw(&gs, &mut disp).await;
         disp.swap(&mut ltdc).await.unwrap();
+        cortex_m::asm::wfe();
    }
 }
 
+const fn mclk_div_from_u8(v: u8) -> sai::MasterClockDivider {
+    match v {
+        1 => sai::MasterClockDivider::Div1,
+        2 => sai::MasterClockDivider::Div2,
+        3 => sai::MasterClockDivider::Div3,
+        4 => sai::MasterClockDivider::Div4,
+        5 => sai::MasterClockDivider::Div5,
+        6 => sai::MasterClockDivider::Div6,
+        7 => sai::MasterClockDivider::Div7,
+        8 => sai::MasterClockDivider::Div8,
+        9 => sai::MasterClockDivider::Div9,
+        10 => sai::MasterClockDivider::Div10,
+        11 => sai::MasterClockDivider::Div11,
+        12 => sai::MasterClockDivider::Div12,
+        13 => sai::MasterClockDivider::Div13,
+        14 => sai::MasterClockDivider::Div14,
+        15 => sai::MasterClockDivider::Div15,
+        16 => sai::MasterClockDivider::Div16,
+        17 => sai::MasterClockDivider::Div17,
+        18 => sai::MasterClockDivider::Div18,
+        19 => sai::MasterClockDivider::Div19,
+        20 => sai::MasterClockDivider::Div20,
+        21 => sai::MasterClockDivider::Div21,
+        22 => sai::MasterClockDivider::Div22,
+        23 => sai::MasterClockDivider::Div23,
+        24 => sai::MasterClockDivider::Div24,
+        25 => sai::MasterClockDivider::Div25,
+        26 => sai::MasterClockDivider::Div26,
+        27 => sai::MasterClockDivider::Div27,
+        28 => sai::MasterClockDivider::Div28,
+        29 => sai::MasterClockDivider::Div29,
+        30 => sai::MasterClockDivider::Div30,
+        31 => sai::MasterClockDivider::Div31,
+        32 => sai::MasterClockDivider::Div32,
+        33 => sai::MasterClockDivider::Div33,
+        34 => sai::MasterClockDivider::Div34,
+        35 => sai::MasterClockDivider::Div35,
+        36 => sai::MasterClockDivider::Div36,
+        37 => sai::MasterClockDivider::Div37,
+        38 => sai::MasterClockDivider::Div38,
+        39 => sai::MasterClockDivider::Div39,
+        40 => sai::MasterClockDivider::Div40,
+        41 => sai::MasterClockDivider::Div41,
+        42 => sai::MasterClockDivider::Div42,
+        43 => sai::MasterClockDivider::Div43,
+        44 => sai::MasterClockDivider::Div44,
+        45 => sai::MasterClockDivider::Div45,
+        46 => sai::MasterClockDivider::Div46,
+        47 => sai::MasterClockDivider::Div47,
+        48 => sai::MasterClockDivider::Div48,
+        49 => sai::MasterClockDivider::Div49,
+        50 => sai::MasterClockDivider::Div50,
+        51 => sai::MasterClockDivider::Div51,
+        52 => sai::MasterClockDivider::Div52,
+        53 => sai::MasterClockDivider::Div53,
+        54 => sai::MasterClockDivider::Div54,
+        55 => sai::MasterClockDivider::Div55,
+        56 => sai::MasterClockDivider::Div56,
+        57 => sai::MasterClockDivider::Div57,
+        58 => sai::MasterClockDivider::Div58,
+        59 => sai::MasterClockDivider::Div59,
+        60 => sai::MasterClockDivider::Div60,
+        61 => sai::MasterClockDivider::Div61,
+        62 => sai::MasterClockDivider::Div62,
+        63 => sai::MasterClockDivider::Div63,
+        _ => panic!(),
+    }
+}
 

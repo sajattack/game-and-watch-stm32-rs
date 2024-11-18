@@ -1,8 +1,10 @@
 use defmt::debug;
 use embassy_time::Timer;
 use embassy_stm32::{
-    mode::Blocking, ospi::{AddressSize, ChipSelectHighTime, SckPin, D0Pin, D1Pin, D2Pin, D3Pin, NSSPin, DummyCycles, FIFOThresholdLevel, Instance, MemorySize, MemoryType, Ospi, OspiWidth,     TransferConfig, WrapSize}, peripherals::{self, OCTOSPI1, PA1, PB1, PB2, PD12, PE11, PE2}, rcc::frequency, Peripheral, PeripheralRef
+    mode::Blocking, ospi::{AddressSize, ChipSelectHighTime, D0Pin, D1Pin, D2Pin, D3Pin, DummyCycles, FIFOThresholdLevel, Instance, MemorySize, MemoryType, NSSPin, Ospi, OspiWidth, SckPin, TransferConfig, WrapSize}, pac::{self, octospi::vals::FunctionalMode}, peripherals::{self, OCTOSPI1, PA1, PB1, PB2, PD12, PE11, PE2}, rcc::frequency, Peripheral, PeripheralRef
 };
+
+use pac::common::Write;
 
 #[repr(u8)]
 enum FlashCommand {
@@ -42,10 +44,10 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
     {
 
         let qspi_config = embassy_stm32::ospi::Config {
-            fifo_threshold: FIFOThresholdLevel::_4Bytes,
+            fifo_threshold: FIFOThresholdLevel::_32Bytes,
             memory_type: MemoryType::Macronix,
             device_size: MemorySize::_1MiB,
-            chip_select_high_time: ChipSelectHighTime::_4Cycle,
+            chip_select_high_time: ChipSelectHighTime::_2Cycle,
             free_running_clock: false,
             clock_mode: false,
             wrap_size: WrapSize::None,
@@ -55,7 +57,7 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
             chip_select_boundary: 0,
             delay_block_bypass: true,
             max_transfer: 0,
-            refresh: 0,
+            refresh: 0
         };
 
         debug!("OSPI1 freq {}", frequency::<peripherals::OCTOSPI1>());
@@ -151,6 +153,11 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
         };
         self.ospi.blocking_write(&mut status_reg_val, transaction).unwrap();
 
+        while pac::OCTOSPI1.sr().read().busy() {
+            core::hint::spin_loop();
+        }
+
+
         let read_config: TransferConfig = TransferConfig {
             instruction: Some(FlashCommand::CMD_READ as u32),
             iwidth: OspiWidth::SING,
@@ -172,6 +179,16 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
         };
 
         self.ospi.enable_memory_mapped_mode(read_config, write_config).unwrap();
+
+        while pac::OCTOSPI1.sr().read().busy() {
+            core::hint::spin_loop();
+        }
+
+        pac::OCTOSPI1.cr().modify(|w| {
+            w.set_fmode(FunctionalMode::MEMORYMAPPED);
+            w.set_dmaen(false);
+            w.set_en(true)
+        });
 
         Timer::after_millis(20).await;
     }
