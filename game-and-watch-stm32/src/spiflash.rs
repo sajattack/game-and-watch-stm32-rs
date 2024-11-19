@@ -47,7 +47,7 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
             fifo_threshold: FIFOThresholdLevel::_32Bytes,
             memory_type: MemoryType::Macronix,
             device_size: MemorySize::_1MiB,
-            chip_select_high_time: ChipSelectHighTime::_2Cycle,
+            chip_select_high_time: ChipSelectHighTime::_4Cycle,
             free_running_clock: false,
             clock_mode: false,
             wrap_size: WrapSize::None,
@@ -183,12 +183,6 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
         while pac::OCTOSPI1.sr().read().busy() {
             core::hint::spin_loop();
         }
-
-        pac::OCTOSPI1.cr().modify(|w| {
-            w.set_fmode(FunctionalMode::MEMORYMAPPED);
-            w.set_dmaen(false);
-            w.set_en(true)
-        });
 
         Timer::after_millis(20).await;
     }

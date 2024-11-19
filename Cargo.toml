@@ -8,6 +8,9 @@ resolver="2"
 [profile.release]
 debug = 2
 
+[profile.dev]
+opt-level = 1
+
 
 [patch.crates-io]
 embassy-time = { git="https://github.com/embassy-rs/embassy", rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c"}

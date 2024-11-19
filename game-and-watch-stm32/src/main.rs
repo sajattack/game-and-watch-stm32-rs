@@ -22,7 +22,7 @@ use mux::{Fmcsel, Persel};
 use tinybmp::Bmp;
 
 use embassy_stm32::{
-    bind_interrupts, dma::Channel, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals::{self, SAI1}, rcc::{mux::Saisel, SupplyConfig, *}, sai::{self, Dma, FsPin, MuteValue, Sai, SckPin, SdPin, SubBlock}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, Peripheral, PeripheralRef
+    bind_interrupts, dma::Channel, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals::{self, RNG, SAI1}, rcc::{self, mux::Saisel, SupplyConfig, *}, rng::{self, Rng}, sai::{self, Dma, FsPin, MuteValue, Sai, SckPin, SdPin, SubBlock}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, Peripheral, PeripheralRef
 };
 
 use embassy_time::Timer;
@@ -35,6 +35,7 @@ use panic_probe as _;
 
 bind_interrupts!(struct Irqs {
     LTDC => ltdc::InterruptHandler<peripherals::LTDC>;
+    HASH_RNG => rng::InterruptHandler<peripherals::RNG>;
 });
 
 static mut FRONT_BUFFER: [TargetPixelType; WIDTH * HEIGHT] = [0u16; WIDTH * HEIGHT];
@@ -45,9 +46,11 @@ static BUTTONS: Mutex<CriticalSectionRawMutex, Option<Buttons>> = Mutex::new(Non
 // it's better than making it static mut I suppose
 static FERRIS: Mutex<CriticalSectionRawMutex, Option<Bmp<Rgb565>>> = Mutex::new(None);
 
-static SAI_RESOURCES: Mutex<CriticalSectionRawMutex, Option<SaiResources>> = Mutex::new(None);
+static SAI: Mutex<CriticalSectionRawMutex, Option<Sai<'_, SAI1, u16>>> = Mutex::new(None);
 
-const HALF_DMA_BUFFER_LENGTH: usize = 1024;
+static RNG: Mutex<CriticalSectionRawMutex, Option<Rng<'static, RNG>>> = Mutex::new(None);
+
+const HALF_DMA_BUFFER_LENGTH: usize = 64;
 const DMA_BUFFER_LENGTH: usize = HALF_DMA_BUFFER_LENGTH * 2;
 const SAMPLE_RATE: u32 = 48000;
 
@@ -140,129 +143,27 @@ async fn input_task() -> ! {
                 b.tick_all();
             }
         }
-        Timer::after_micros(500).await;
+        Timer::after_millis(1).await;
     }
 }
 
-#[embassy_executor::task]
+//#[embassy_executor::task]
 async fn audio_tx_task(
-) -> !
+) 
 {
-
-    //let audio_data = unsafe {
-        //core::slice::from_raw_parts(
-            //0x90000000 as *const u16,
-            //368542/2
-        //)
-    //};
-
-    let mut resources = SAI_RESOURCES.lock().await;  
-    if let Some(r) = resources.as_mut() {
-        let mut audio_pos: usize = 0;
-
-        let mut tx_buffer: &mut [u16] = unsafe {
-            let buf = &mut *core::ptr::addr_of_mut!(TX_BUFFER);
-            buf.initialize_all_copied(0);
-            let (ptr, len) = buf.get_ptr_len();
-            core::slice::from_raw_parts_mut(ptr, len)
-        };
-
-        let mut sai_transmitter = new_sai(r, tx_buffer);
-
-        sai_transmitter.set_mute(false);
-
-        let mut audio_data = [0u16; HALF_DMA_BUFFER_LENGTH];
-
-        loop {
-            debug!("audio pos {}", audio_pos);
-            for i in 0..audio_data.len()-1 {
-                audio_data[i] = unsafe { core::ptr::read_volatile((0x90000000 + audio_pos + i) as *const _) };
-                pac::OCTOSPI1.fcr().write(|w| 
-                    {
-                        w.set_ctcf(true);
-                        w.set_ctef(true);
-                        w.set_csmf(true);
-                        w.set_ctof(true)
-                    }
-                );
-                //while pac::OCTOSPI1.sr().read().busy() {
-                    //core::hint::spin_loop();
-                //}
-            }
-
-            debug!("sample data: {}", audio_data[0..10]);
-
+    let mut sai_lock = SAI.lock().await;
+    let mut rng_lock = RNG.lock().await;
+    if let Some(r) = rng_lock.as_mut() {
+        if let Some(sai_transmitter) = sai_lock.as_mut() {
+            let mut audio_data = [0u8; HALF_DMA_BUFFER_LENGTH*2];
+            r.async_fill_bytes(&mut audio_data).await.unwrap();
+            let mut audio_data = unsafe { core::mem::transmute::<[u8; HALF_DMA_BUFFER_LENGTH*2], [u16; HALF_DMA_BUFFER_LENGTH]>(audio_data) };
+            //debug!("sample data: {}", audio_data[0..10]);
             let result = sai_transmitter.write(&audio_data).await;
-            if let Err(e) = result {
-                error!("{}", e);
-                drop(sai_transmitter);
-                sai_transmitter = new_sai(r, tx_buffer);
-                sai_transmitter.set_mute(false);
-            }
-
-
-            if audio_pos < 368542/2 - HALF_DMA_BUFFER_LENGTH*2{
-                audio_pos += HALF_DMA_BUFFER_LENGTH;
-            }
-            else 
-            {
-                audio_pos = 0
-            }
         }
     }
-    loop{}
 }
 
-pub struct SaiResources {
-    pub sai: peripherals::SAI1,
-    pub sck: peripherals::PE5,
-    pub sd: peripherals::PE6,
-    pub fs: peripherals::PE4,
-    pub dma: peripherals::DMA1_CH0,
-}
-
-fn new_sai<'d>(
-    resources: &'d mut SaiResources,
-    tx_buffer: &'d mut [u16],
-) -> sai::Sai<'d, peripherals::SAI1, u16>
- {
-    let kernel_clock = frequency::<peripherals::SAI1>().0;
-    let mclk_div = mclk_div_from_u8((kernel_clock / (SAMPLE_RATE * 256)) as u8);
-
-    let mut tx_config = sai::Config::default();
-    tx_config.mode = sai::Mode::Master;
-    tx_config.tx_rx = sai::TxRx::Transmitter;
-    tx_config.sync_output = false;
-    tx_config.output_drive = sai::OutputDrive::Immediately;
-    tx_config.master_clock_divider = mclk_div;
-    tx_config.stereo_mono = sai::StereoMono::Mono;
-    tx_config.data_size = sai::DataSize::Data16;
-    tx_config.bit_order = sai::BitOrder::MsbFirst;
-    tx_config.frame_length = 64;
-    tx_config.frame_sync_polarity = sai::FrameSyncPolarity::ActiveHigh;
-    tx_config.frame_sync_offset = sai::FrameSyncOffset::OnFirstBit;
-    tx_config.frame_sync_active_level_length = embassy_stm32::sai::word::U7(32);
-    tx_config.fifo_threshold = sai::FifoThreshold::Quarter;
-    tx_config.slot_enable = 65535;
-    tx_config.protocol = sai::Protocol::Free;
-    tx_config.companding = sai::Companding::None;
-    tx_config.is_high_impedance_on_inactive_slot = false;
-    tx_config.clock_strobe = sai::ClockStrobe::Rising;
-
-
-    let sai_transmitter = Sai::new_asynchronous(
-        sai::split_subblocks(&mut resources.sai).0,
-        &mut resources.sck,
-        &mut resources.sd,
-        &mut resources.fs,
-        &mut resources.dma,
-        tx_buffer,
-        tx_config
-    );
-
-
-    sai_transmitter
-}
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -447,36 +348,70 @@ async fn main(spawner: Spawner) {
 
     debug!("SAI FREQ: {}", embassy_stm32::rcc::frequency::<peripherals::SAI1>());
 
-    debug!("Freq bit: {}", pac::SAI1.ch(0).sr().read().freq());
-
-
-    let mut resources = SaiResources {
-        sai: cp.SAI1,
-        sck: cp.PE5,
-        sd: cp.PE6,
-        fs: cp.PE4,
-        dma: cp.DMA1_CH0,
-    };
-
-    *(SAI_RESOURCES.lock().await) = Some(resources);
-
     let audio_enable = Output::new(cp.PE3, Level::High, Speed::Low);
 
-    spawner.spawn(audio_tx_task()).unwrap(); 
+    let mut rng = Rng::new(cp.RNG, Irqs); 
+
+    {
+        *RNG.lock().await = Some(rng);
+    }
 
     // Initialize state
     let mut gs = GameState::new();
 
     // start polling for input asynchronously
-    spawner.spawn(input_task()).unwrap();
+    //spawner.spawn(input_task()).unwrap();
+
+    let kernel_clock = rcc::frequency::<peripherals::SAI1>().0;
+    debug!("SAI clock: {}", kernel_clock);
+    let mclk_div = mclk_div_from_u8((kernel_clock / (SAMPLE_RATE * 256)) as u8);
+
+    let mut tx_config = sai::Config::default();
+    tx_config.mode = sai::Mode::Master;
+    tx_config.tx_rx = sai::TxRx::Transmitter;
+    tx_config.sync_output = true;
+    tx_config.clock_strobe = sai::ClockStrobe::Rising;
+    tx_config.master_clock_divider = mclk_div;
+    tx_config.stereo_mono = sai::StereoMono::Mono;
+    tx_config.data_size = sai::DataSize::Data16;
+    tx_config.bit_order = sai::BitOrder::MsbFirst;
+    tx_config.frame_sync_polarity = sai::FrameSyncPolarity::ActiveHigh;
+    tx_config.frame_sync_offset = sai::FrameSyncOffset::OnFirstBit;
+    tx_config.frame_length = 64;
+    tx_config.frame_sync_active_level_length = embassy_stm32::sai::word::U7(32);
+    tx_config.fifo_threshold = sai::FifoThreshold::Quarter;
+
+    let tx_buffer: &mut [u16] = unsafe {
+        let buf = &mut *core::ptr::addr_of_mut!(TX_BUFFER);
+        buf.initialize_all_copied(0);
+        let (ptr, len) = buf.get_ptr_len();
+        core::slice::from_raw_parts_mut(ptr, len)
+    };
+
+    let mut sai_transmitter = Sai::new_asynchronous(
+        sai::split_subblocks(cp.SAI1).0,
+        cp.PE5,
+        cp.PE6,
+        cp.PE4,
+        cp.DMA1_CH0,
+        tx_buffer,
+        tx_config
+    );
+
+    sai_transmitter.set_mute(false);
+
+    { 
+    *SAI.lock().await = Some(sai_transmitter);
+    }
 
     // main loop
-    loop { 
+   loop { 
+        audio_tx_task().await;
         update(&mut gs, &mut lcd).await; 
         draw(&gs, &mut disp).await;
         disp.swap(&mut ltdc).await.unwrap();
-        cortex_m::asm::wfe();
-   }
+        //Timer::after_millis(16).await;
+    }
 }
 
 const fn mclk_div_from_u8(v: u8) -> sai::MasterClockDivider {

@@ -206,7 +206,7 @@ impl<'a> DrawTarget for DoubleBuffer<'a> {
                 buf[index as usize] = raw_color;
             } else {
                 // Ignore invalid points
-                defmt::error!("Invalid address");
+                //defmt::error!("Invalid address");
             }
         }
 
