@@ -4,6 +4,9 @@
 mod lcd;
 use lcd::*;
 
+//mod input;
+//use input::*;
+
 use core::ptr::addr_of_mut;
 
 use cortex_m_rt::entry;
@@ -110,6 +113,29 @@ fn main() -> ! {
         b2: gpiod.pd6: 14
     };
 
+    let left = gpiod.pd11;
+    let right = gpiod.pd15;
+    let up = gpiod.pd0;
+    let down = gpiod.pd14;
+    let a = gpiod.pd9;
+    let b = gpiod.pd5;
+    let game = gpioc.pc1;
+    let time = gpioc.pc4;
+    let pause = gpioc.pc13;
+    let power = gpioa.pa0;
+
+    //let buttons: Buttons = ButtonPins::new(
+        //left.into(),
+        //right.into(),
+        //up.into(),
+        //down.into(), 
+        //a.into(),
+        //b.into(),
+        //game.into(),
+        //time.into(),
+        //pause.into(),
+        //power.into()
+    //).into();
 
     let sck = gpiob.pb13.into_alternate();
     let miso = gpioc.pc2.into_alternate();
@@ -125,7 +151,7 @@ fn main() -> ! {
     let reset = gpiod.pd8.into_push_pull_output();
 
 
-    let spi = dp.SPI2.spi((sck, miso, mosi), spi::MODE_0, 25.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
+    let spi = dp.SPI2.spi((sck, miso, mosi), spi::MODE_0, 15.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
 
     let mut ltdc = ltdc::Ltdc::new(dp.LTDC, ccdr.peripheral.LTDC, &ccdr.clocks);
     ltdc.init(
@@ -154,7 +180,7 @@ fn main() -> ! {
     let mut back_buffer = [0u16; lcd::WIDTH * lcd::HEIGHT];
 
     let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi, delay);
-    lcd.init();
+    lcd.init().unwrap();
 
     let mut disp = BufferedDisplay::new(layer, &mut front_buffer, &mut back_buffer, WIDTH, HEIGHT);
 

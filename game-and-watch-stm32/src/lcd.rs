@@ -45,7 +45,7 @@ impl Lcd {
 
     pub fn init (
         &mut self
-    )  {
+    ) -> Result<(), spi::Error> {
         // reference impl https://github.com/ghidraninja/game-and-watch-base/blob/main/Core/Src/lcd.c 
         // turn everything off
         self.backlight_off();
@@ -72,74 +72,75 @@ impl Lcd {
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x08, 0x80]).unwrap();
+        self.spi.write(&[0x08, 0x80])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x6e, 0x80]).unwrap();
+        self.spi.write(&[0x6e, 0x80])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x80, 0x80]).unwrap();
+        self.spi.write(&[0x80, 0x80])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x68, 0x00]).unwrap();
+        self.spi.write(&[0x68, 0x00])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0xd0, 0x00]).unwrap();
+        self.spi.write(&[0xd0, 0x00])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x1b, 0x00]).unwrap();
+        self.spi.write(&[0x1b, 0x00])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0xe0, 0x00]).unwrap();
+        self.spi.write(&[0xe0, 0x00])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x6a, 0x80]).unwrap();
+        self.spi.write(&[0x6a, 0x80])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x80, 0x00]).unwrap();
+        self.spi.write(&[0x80, 0x00])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
         self.cs.set_low();
         self.delay.delay_ms(2u32);
-        self.spi.write(&[0x14, 0x80]).unwrap();
+        self.spi.write(&[0x14, 0x80])?;
         self.delay.delay_ms(2u32);
         self.cs.set_high();
         self.delay.delay_ms(2u32);
 
+        Ok(())
     }
 
     pub fn backlight_off(

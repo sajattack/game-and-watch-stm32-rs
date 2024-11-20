@@ -13,12 +13,12 @@ panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 panic-semihosting = "0.6.0"
 stm32h7xx-hal = { version = "0.16.0", features = ["stm32h7b3", "rt", "ltdc", "defmt"] }
-stm32-fmc = { version = "0.3", optional = true }
-embassy-executor = "0.6.1"
 cortex-m-rt = "0.7.1"
-embedded-hal = "1.0.0"
+embedded-hal = "0.2"
 display-interface = "0.5.0"
 embedded-graphics-core = "0.4.0"
 nb = "1.1.0"
 embedded-display-controller = "0.2.0"
 tinybmp = "0.6.0"
+button-driver = { version = "0.2.2", features=["embedded_hal_old"] }
+fugit = { version = "0.3.7", features = ["defmt"] }
