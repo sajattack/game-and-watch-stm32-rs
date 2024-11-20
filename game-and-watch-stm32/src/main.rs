@@ -57,17 +57,17 @@ fn main() -> ! {
 
     // Constrain and Freeze clock
     let rcc = dp.RCC.constrain();
-    let ccdr = rcc.sys_ck(150.MHz())
-        .pll1_q_ck(150.MHz())
-        .pll1_r_ck(150.MHz())
+    let ccdr = rcc.sys_ck(280.MHz())
+        .pll1_q_ck(280.MHz())
+        .pll1_r_ck(280.MHz())
 
         .pll2_p_ck(60.MHz())
-        .pll2_q_ck(150.MHz())
+        .pll2_q_ck(280.MHz())
         .pll2_r_ck(60.MHz())
 
 
-        .pll3_p_ck(150.MHz())
-        .pll3_q_ck(150.MHz())
+        .pll3_p_ck(280.MHz())
+        .pll3_q_ck(280.MHz())
         .pll3_r_ck(25.MHz())
 
         .freeze(pwrcfg, &dp.SYSCFG);
