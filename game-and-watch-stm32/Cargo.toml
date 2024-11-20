@@ -19,11 +19,11 @@ embedded-graphics-core = "0.4.0"
 nb = "1.1.0"
 embedded-display-controller = "0.2.0"
 tinybmp = "0.6.0"
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["stm32h7b0vb", "rt",  "defmt", "unstable-pac", "time", "time-driver-any", "memory-x"]}
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["stm32h7b0vb", "rt",  "defmt", "unstable-pac", "time", "time-driver-tim3", "memory-x"]}
 embassy-time = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["defmt", "tick-hz-32_768"] }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["defmt"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["defmt"] }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["task-arena-size-524288", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers"]}
+embassy-executor = { git = "https://github.com/embassy-rs/embassy" , rev = "8d8cd78f634b2f435e3a997f7f8f3ac0b8ca300c", features = ["task-arena-size-524288", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "executor-interrupt"]}
 button-driver = { version =  "0.2.1", features=["embassy", "embedded_hal"] }
 grounded = { version = "0.2.0", features = ["cas", "critical-section"] }
 

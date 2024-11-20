@@ -22,11 +22,11 @@ use mux::{Fmcsel, Persel};
 use tinybmp::Bmp;
 
 use embassy_stm32::{
-    bind_interrupts, dma::Channel, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals::{self, RNG, SAI1}, rcc::{self, mux::Saisel, SupplyConfig, *}, rng::{self, Rng}, sai::{self, Dma, FsPin, MuteValue, Sai, SckPin, SdPin, SubBlock}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, Peripheral, PeripheralRef
+    bind_interrupts, dma::Channel, flash::{self, Bank1Region, Flash}, gpio::{AfType, Flex, Input, Level, Output, OutputType, Pull, Speed}, interrupt::{self, Priority, InterruptExt}, ltdc::{self, Ltdc}, mode::Blocking, pac, peripherals::{self, RNG, SAI1}, rcc::{self, mux::Saisel, SupplyConfig, *}, rng::{self, Rng}, sai::{self, Dma, FsPin, MuteValue, Sai, SckPin, SdPin, SubBlock}, spi::{Config as SpiConfig, Spi}, time::mhz, Config, Peripheral, PeripheralRef,
 };
 
 use embassy_time::Timer;
-use embassy_executor::Spawner;
+use embassy_executor::{Spawner, InterruptExecutor};
 use embassy_sync::{mutex::Mutex, blocking_mutex::raw::CriticalSectionRawMutex};
 
 use defmt::{info, error, debug};
@@ -49,6 +49,17 @@ static FERRIS: Mutex<CriticalSectionRawMutex, Option<Bmp<Rgb565>>> = Mutex::new(
 static SAI: Mutex<CriticalSectionRawMutex, Option<Sai<'_, SAI1, u16>>> = Mutex::new(None);
 
 static RNG: Mutex<CriticalSectionRawMutex, Option<Rng<'static, RNG>>> = Mutex::new(None);
+
+static LTDC_OBJ: Mutex<CriticalSectionRawMutex, Option<Ltdc<'static, peripherals::LTDC>>> = Mutex::new(None);
+
+static DISPLAY: Mutex<CriticalSectionRawMutex, Option<DoubleBuffer>> = Mutex::new(None);
+
+static LCD: Mutex<CriticalSectionRawMutex, Option<Lcd>> = Mutex::new(None);
+
+static GS: Mutex<CriticalSectionRawMutex, Option<GameState>> = Mutex::new(None);
+
+static IE1: InterruptExecutor = InterruptExecutor::new();
+static IE2: InterruptExecutor = InterruptExecutor::new();
 
 const HALF_DMA_BUFFER_LENGTH: usize = 64;
 const DMA_BUFFER_LENGTH: usize = HALF_DMA_BUFFER_LENGTH * 2;
@@ -147,20 +158,23 @@ async fn input_task() -> ! {
     }
 }
 
-//#[embassy_executor::task]
+#[embassy_executor::task]
 async fn audio_tx_task(
 ) 
 {
-    let mut sai_lock = SAI.lock().await;
-    let mut rng_lock = RNG.lock().await;
-    if let Some(r) = rng_lock.as_mut() {
-        if let Some(sai_transmitter) = sai_lock.as_mut() {
-            let mut audio_data = [0u8; HALF_DMA_BUFFER_LENGTH*2];
-            r.async_fill_bytes(&mut audio_data).await.unwrap();
-            let mut audio_data = unsafe { core::mem::transmute::<[u8; HALF_DMA_BUFFER_LENGTH*2], [u16; HALF_DMA_BUFFER_LENGTH]>(audio_data) };
-            //debug!("sample data: {}", audio_data[0..10]);
-            let result = sai_transmitter.write(&audio_data).await;
+    loop {
+        let mut sai_lock = SAI.lock().await;
+        let mut rng_lock = RNG.lock().await;
+        if let Some(r) = rng_lock.as_mut() {
+            if let Some(sai_transmitter) = sai_lock.as_mut() {
+                let mut audio_data = [0u8; HALF_DMA_BUFFER_LENGTH*2];
+                r.async_fill_bytes(&mut audio_data).await.unwrap();
+                let mut audio_data = unsafe { core::mem::transmute::<[u8; HALF_DMA_BUFFER_LENGTH*2], [u16; HALF_DMA_BUFFER_LENGTH]>(audio_data) };
+                debug!("sample data: {}", audio_data[0..10]);
+                let result = sai_transmitter.write(&audio_data).await;
+            }
         }
+        Timer::after_millis(1).await;
     }
 }
 
@@ -288,6 +302,11 @@ async fn main(spawner: Spawner) {
 
     lcd.init().await.unwrap();
 
+    {
+        *(LCD.lock().await) = Some(lcd);
+    }
+
+
     let mut ltdc = Ltdc::new(
         cp.LTDC
     );
@@ -302,9 +321,17 @@ async fn main(spawner: Spawner) {
         LTDC_LAYER_CONFIG
     );
 
+    {
+        *(DISPLAY.lock().await) = Some(disp);
+    }
+
+    {
+        *(LTDC_OBJ.lock().await) = Some(ltdc);
+    }
+
     info!("Initialised Display...");
 
-    Timer::after_millis(200).await;
+    //Timer::after_millis(200).await;
 
     // initialize buttons
     let buttons: Buttons = ButtonPins::new(
@@ -331,39 +358,43 @@ async fn main(spawner: Spawner) {
 
     // Initialize spi flash
     // FIXME is there a way to avoid calling PeripheralRef::new on all of these?
-    let mut spiflash = SpiFlash::new(
-        PeripheralRef::new(cp.PB2),
-        PeripheralRef::new(cp.PB1),
-        PeripheralRef::new(cp.PD12),
-        PeripheralRef::new(cp.PE2),
-        PeripheralRef::new(cp.PA1),
-        PeripheralRef::new(cp.PE11),
-        PeripheralRef::new(cp.OCTOSPI1)
-    );
-    spiflash.init().await;
+    //let mut spiflash = SpiFlash::new(
+        //PeripheralRef::new(cp.PB2),
+        //PeripheralRef::new(cp.PB1),
+        //PeripheralRef::new(cp.PD12),
+        //PeripheralRef::new(cp.PE2),
+        //PeripheralRef::new(cp.PA1),
+        //PeripheralRef::new(cp.PE11),
+        //PeripheralRef::new(cp.OCTOSPI1)
+    //);
+    //spiflash.init().await;
 
-    unsafe {
-        debug!("First word of spiflash: {=u32:x}", core::ptr::read_volatile(0x90000000 as *const u32));
-    }
+    //unsafe {
+        //debug!("First word of spiflash: {=u32:x}", core::ptr::read_volatile(0x90000000 as *const u32));
+    //}
 
-    debug!("SAI FREQ: {}", embassy_stm32::rcc::frequency::<peripherals::SAI1>());
+    //debug!("SAI FREQ: {}", embassy_stm32::rcc::frequency::<peripherals::SAI1>());
 
     let audio_enable = Output::new(cp.PE3, Level::High, Speed::Low);
 
     let mut rng = Rng::new(cp.RNG, Irqs); 
 
     {
-        *RNG.lock().await = Some(rng);
+        *(RNG.lock().await) = Some(rng);
     }
 
     // Initialize state
     let mut gs = GameState::new();
 
+    {
+        *(GS.lock().await) = Some(gs);
+    }
+
     // start polling for input asynchronously
     //spawner.spawn(input_task()).unwrap();
 
     let kernel_clock = rcc::frequency::<peripherals::SAI1>().0;
-    debug!("SAI clock: {}", kernel_clock);
+    //debug!("SAI clock: {}", kernel_clock);
     let mclk_div = mclk_div_from_u8((kernel_clock / (SAMPLE_RATE * 256)) as u8);
 
     let mut tx_config = sai::Config::default();
@@ -401,17 +432,55 @@ async fn main(spawner: Spawner) {
     sai_transmitter.set_mute(false);
 
     { 
-    *SAI.lock().await = Some(sai_transmitter);
+    *(SAI.lock().await) = Some(sai_transmitter);
     }
 
-    // main loop
-   loop { 
-        audio_tx_task().await;
-        update(&mut gs, &mut lcd).await; 
-        draw(&gs, &mut disp).await;
-        disp.swap(&mut ltdc).await.unwrap();
-        //Timer::after_millis(16).await;
+    pac::interrupt::UART7.set_priority(Priority::P6);
+    pac::interrupt::UART8.set_priority(Priority::P7);
+
+   let sai_spawner = unsafe { IE1.start(pac::interrupt::UART7) };
+   let ltdc_spawner = unsafe { IE2.start(pac::interrupt::UART8) };
+
+   //sai_spawner.spawn(audio_tx_task()).unwrap();
+   ltdc_spawner.spawn(display_task()).unwrap();
+
+   //loop {
+        //cortex_m::asm::wfi();
+   //}
+}
+
+#[embassy_executor::task]
+async fn display_task() {
+    let mut ltdc_lock = LTDC_OBJ.lock().await;
+    let mut disp_lock = DISPLAY.lock().await;
+    let mut gs_lock = GS.lock().await;
+    let mut lcd_lock = LCD.lock().await;
+    if let Some(ltdc) = ltdc_lock.as_mut() {
+        if let Some(disp) = disp_lock.as_mut() {
+            if let Some(gs) = gs_lock.as_mut() {
+                if let Some(lcd) = lcd_lock.as_mut() {
+
+                    loop {
+                        update(gs, lcd).await; 
+                        draw(gs,  disp).await;
+                        disp.swap(ltdc).await.unwrap();
+                        Timer::after_millis(16).await;
+                    }
+                }
+            }
+        }
     }
+}
+
+#[cortex_m_rt::interrupt]
+unsafe fn UART7() {
+    IE1.on_interrupt()
+}
+
+
+#[cortex_m_rt::interrupt]
+unsafe fn UART8() {
+    IE2.on_interrupt()
 }
 
 const fn mclk_div_from_u8(v: u8) -> sai::MasterClockDivider {
