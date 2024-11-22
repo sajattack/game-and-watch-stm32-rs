@@ -157,7 +157,6 @@ impl<'a, T: embassy_stm32::ospi::Instance> SpiFlash<'a, T>
             core::hint::spin_loop();
         }
 
-
         let read_config: TransferConfig = TransferConfig {
             instruction: Some(FlashCommand::CMD_READ as u32),
             iwidth: OspiWidth::SING,
