@@ -11,7 +11,7 @@ mod spiflash;
 use spiflash::*;
 
 use cortex_m_rt::entry;
-use stm32h7xx_hal::{pac, prelude::*, spi::{self, Spi}, ltdc, gpio::Speed};
+use stm32h7xx_hal::{gpio::Speed, ltdc, pac::{self, rcc::cdccipr::FMCSEL_A}, prelude::*, rcc::rec::Spi123ClkSel, spi::{self, Spi}};
 use embedded_display_controller::{DisplayController, DisplayControllerLayer, DisplayConfiguration};
 
 use embedded_graphics::{image::Image, primitives::Rectangle, pixelcolor::Rgb565};
@@ -24,7 +24,7 @@ use tinybmp::Bmp;
 use utilities_display::write::write_to::WriteTo;
 use utilities_display::display_target::BufferedDisplay;
 
-use defmt::{info, error};
+use defmt::{info, error, debug};
 use defmt_rtt as _;
 use panic_probe as _;
 
@@ -58,10 +58,9 @@ fn main() -> ! {
     let pwr = dp.PWR.constrain();
     let pwrcfg = pwr.ldo().vos0(&dp.SYSCFG).freeze();
 
-
     // Constrain and Freeze clock
     let rcc = dp.RCC.constrain();
-    let ccdr = rcc.sys_ck(280.MHz())
+    let mut ccdr = rcc.sys_ck(280.MHz())
         .pll1_q_ck(280.MHz())
         .pll1_r_ck(280.MHz())
 
@@ -70,12 +69,15 @@ fn main() -> ! {
         .pll2_r_ck(60.MHz())
 
 
-        .pll3_p_ck(280.MHz())
+        .pll3_p_ck(25.MHz())
         .pll3_q_ck(280.MHz())
-        .pll3_r_ck(25.MHz())
+        .pll3_r_ck(280.MHz())
+        .per_ck(64.MHz())
 
         .freeze(pwrcfg, &dp.SYSCFG);
 
+    ccdr.peripheral.kernel_octospi_clk_mux(FMCSEL_A::Per);
+    ccdr.peripheral.kernel_spi123_clk_mux(Spi123ClkSel::Pll3P);
 
     // Get the delay provider.
     let mut delay = cp.SYST.delay(ccdr.clocks);
@@ -180,13 +182,26 @@ fn main() -> ! {
     let mut front_buffer = [0u16; lcd::WIDTH * lcd::HEIGHT];
     let mut back_buffer = [0u16; lcd::WIDTH * lcd::HEIGHT];
 
-    let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi, delay);
+    let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi, &mut delay);
     lcd.init().unwrap();
 
     let mut disp = BufferedDisplay::new(layer, &mut front_buffer, &mut back_buffer, WIDTH, HEIGHT);
 
     info!("Initialised Display...");
     
+    let mut spiflash = SpiFlash::new(
+        gpiob.pb2.into(),
+        gpiob.pb1.into(),
+        gpiod.pd12.into(),
+        gpioe.pe2.into(),
+        gpioa.pa1.into(),
+        gpioe.pe11.into(),
+        dp.OCTOSPI1, &ccdr.clocks, ccdr.peripheral.OCTOSPI1, &mut delay);
+    spiflash.init().unwrap();
+
+    let mut buf = [0u8; 32];
+    spiflash.read_bytes(0, &mut buf).unwrap();
+    debug!("First 32 bytes of flash: {=[u8]:x}", buf);
 
     loop { 
         disp.layer(|draw| {

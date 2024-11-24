@@ -5,7 +5,7 @@ use stm32h7xx_hal::{pac::SPI2, prelude::*, gpio::{Pin, Output, PushPull}, delay:
 
 //use embedded_hal::delay::DelayMs;
 
-pub struct Lcd{
+pub struct Lcd<'a> {
     backlight1: Pin<'A', 4, Output<PushPull>>,
     backlight2: Pin<'A', 5, Output<PushPull>>,
     backlight3: Pin<'A', 6, Output<PushPull>>,
@@ -14,10 +14,10 @@ pub struct Lcd{
     reset: Pin<'D', 8, Output<PushPull>>,
     cs: Pin<'B', 12, Output<PushPull>>,
     spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-    delay: Delay
+    delay: &'a mut Delay
 }
 
-impl Lcd {
+impl <'a> Lcd <'a> {
     pub fn new(
         backlight1: Pin<'A', 4, Output<PushPull>>,
         backlight2: Pin<'A', 5, Output<PushPull>>,
@@ -27,7 +27,7 @@ impl Lcd {
         reset: Pin<'D', 8, Output<PushPull>>,
         cs: Pin<'B', 12, Output<PushPull>>,
         spi:  spi::Spi<SPI2, spi::Enabled, u8>,
-        delay: Delay
+        delay: &'a mut Delay
     ) -> Self {
         Self {
             backlight1,
