@@ -7,7 +7,8 @@ use lcd::*;
 //mod input;
 //use input::*;
 
-use core::ptr::addr_of_mut;
+mod spiflash;
+use spiflash::*;
 
 use cortex_m_rt::entry;
 use stm32h7xx_hal::{pac, prelude::*, spi::{self, Spi}, ltdc, gpio::Speed};
