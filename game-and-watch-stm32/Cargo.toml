@@ -12,7 +12,8 @@ embedded-graphics = "0.8.1"
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 panic-semihosting = "0.6.0"
-stm32h7xx-hal = { version = "0.16.0", features = ["stm32h7b0", "rt", "ltdc", "defmt", "xspi"] }
+# git dep required due to octospi::configure_modes
+stm32h7xx-hal = { git = "https://github.com/stm32-rs/stm32h7xx-hal", features = ["stm32h7b0", "rt", "ltdc", "defmt", "xspi"] }
 cortex-m-rt = "0.7.1"
 embedded-hal = "0.2"
 display-interface = "0.5.0"

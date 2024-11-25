@@ -65,9 +65,8 @@ fn main() -> ! {
         .pll1_q_ck(280.MHz())
         .pll1_r_ck(280.MHz())
 
-        .pll2_p_ck(60.MHz())
+        .pll2_p_ck(64.MHz())
         .pll2_q_ck(150.MHz())
-        .pll2_r_ck(60.MHz())
 
 
         .pll3_p_ck(150.MHz())
@@ -204,6 +203,11 @@ fn main() -> ! {
         w.octospimrst().clear_bit() 
     });
 
+    rcc.ahb3enr.modify(|_, w| {
+        w.octospi1en().set_bit();
+        w.octospimen().set_bit()
+    });
+
     enable_1v8.set_high();
 
     let mut spiflash = SpiFlash::new(
@@ -216,9 +220,9 @@ fn main() -> ! {
         dp.OCTOSPI1, &ccdr.clocks, ccdr.peripheral.OCTOSPI1, &mut delay);
     spiflash.init().unwrap();
 
-    let mut buf = [0u8; 1];
+    let mut buf = [0u8; 32];
     spiflash.read_bytes(0, &mut buf).unwrap();
-    debug!("First byte of flash: {=[u8]:x}", buf);
+    debug!("First 32 bytes of flash: {=[u8]:x}", buf);
 
     loop { 
         disp.layer(|draw| {
@@ -238,4 +242,3 @@ fn main() -> ! {
         disp.swap_layer_wait();
     }
 }
-
