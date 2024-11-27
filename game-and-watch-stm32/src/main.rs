@@ -87,7 +87,7 @@ mod app {
         let rcc = ctx.device.RCC.constrain();
         
         let mut ccdr = rcc.sys_ck(280.MHz())
-            .pll2_p_ck(72.MHz())
+            .pll2_p_ck(18.MHz())
             .pll2_q_ck(144.MHz())
             .pll2_r_ck(6.MHz())
 
@@ -178,7 +178,6 @@ mod app {
 
         debug!("SPI clock {}", Spi::<stm32h7xx_hal::stm32::SPI2, spi::Enabled, u8>::kernel_clk(&ccdr.clocks).unwrap().raw());
 
-
         let mut ltdc = ltdc::Ltdc::new(ctx.device.LTDC, ccdr.peripheral.LTDC, &ccdr.clocks);
         ltdc.init(
             DisplayConfiguration {
@@ -230,6 +229,7 @@ mod app {
         let sai1_rec = ccdr.peripheral.SAI1.kernel_clk_mux(Sai1ClkSel::Pll2P);
         let master_config =
             I2SChanConfig::new(I2SDir::Tx).set_frame_sync_active_high(true);
+
         let slave_config = I2SChanConfig::new(I2SDir::Rx)
             .set_sync_type(I2SSync::Internal)
             .set_frame_sync_active_high(true);
@@ -246,7 +246,7 @@ mod app {
         let mut audio = ctx.device.SAI1.i2s_ch_a(
             sai1_pins,
             AUDIO_SAMPLE_HZ,
-            I2SDataSize::BITS_24,
+            I2SDataSize::BITS_16,
             sai1_rec,
             &ccdr.clocks,
             I2sUsers::new(master_config).add_slave(slave_config),
@@ -259,7 +259,7 @@ mod app {
 
         audio.listen(SaiChannel::ChannelA, sai::Event::Data);
         audio.enable();
-        audio.try_send(0, 0).unwrap();
+        nb::block!(audio.try_send(0, 0)).unwrap();
 
         
         info!("Startup complete!");
@@ -275,27 +275,31 @@ mod app {
         )
     }
 
-    #[task(binds=SAI1, shared=[audio, spiflash], local=[audio_pos])]
-    fn audio_tx(mut ctx: audio_tx::Context) {
-        let mut buf_left = [0u8; 4];
-        let mut buf_right = [0u8; 4];
+    //#[task(binds=SAI1, shared=[audio, spiflash], local=[audio_pos])]
+    //fn audio_tx(mut ctx: audio_tx::Context) {
 
-        ctx.shared.spiflash.lock(|spiflash| {
-            spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_left).unwrap();
-            spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_right).unwrap();
-        });
+        //ctx.shared.audio.lock(|audio| {
+            //for _ in 0..48_000
+            //{
+                //let mut buf = [0u8; 2];
+                //ctx.shared.spiflash.lock(|spiflash| {
+                    //spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf).unwrap();
+                //});
 
-        ctx.shared.audio.lock(|audio| {
-            audio.try_send(u32::from_le_bytes(buf_left), u32::from_le_bytes(buf_right)).unwrap();
-        });
-        if *ctx.local.audio_pos < AUDIO_SIZE -2 {
-            *ctx.local.audio_pos += 2;
-        }
-        else {
-            *ctx.local.audio_pos = 0;
-        }
-        trace!("audio pos: {}", ctx.local.audio_pos);
-    }
+                //let value = u16::from_le_bytes(buf);
+
+                //nb::block!(audio.try_send(0, value as u32)).unwrap();
+
+                //if *ctx.local.audio_pos < AUDIO_SIZE -2 {
+                    //*ctx.local.audio_pos += 2;
+                //}
+                //else {
+                    //*ctx.local.audio_pos = 0;
+                //}
+            //}
+        //});
+        //trace!("audio pos: {}", ctx.local.audio_pos);
+    //}
 
     #[task(binds = LTDC, local = [display])]
     fn draw(ctx: draw::Context) {
