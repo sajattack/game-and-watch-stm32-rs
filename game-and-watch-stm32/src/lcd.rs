@@ -1,6 +1,7 @@
 pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 240;
 
+use defmt::debug;
 use stm32h7xx_hal::{delay::Delay, gpio::{Output, Pin, PushPull}, ltdc::{Ltdc, LtdcLayer1}, pac::SPI2, prelude::*, spi};
 
 pub struct Lcd {
@@ -39,15 +40,16 @@ impl Lcd {
 
     fn spi_write<'a>(
         &mut self,
-        buf: &'a [u8],
+        buf: &[u8],
         delay: &'a mut Delay,
     ) -> Result<(), spi::Error> {
         self.cs.set_low();
         delay.delay_ms(2u8);
-        self.spi.write(buf)?;
+        self.spi.write(&buf)?;
         delay.delay_ms(2u8);
         self.cs.set_high();
         delay.delay_ms(2u8);
+        debug!("wrote {=[u8]:x} to lcd", buf);
         Ok(())
     }
 
@@ -78,15 +80,15 @@ impl Lcd {
         self.reset.set_high();
         delay.delay_ms(1u8);
 
-        self.spi_write(&[0x08; 0x80], delay)?;
-        self.spi_write(&[0x6e; 0x80], delay)?;
-        self.spi_write(&[0x80; 0x80], delay)?;
-        self.spi_write(&[0x68; 0x00], delay)?;
-        self.spi_write(&[0xd0; 0x00], delay)?;
-        self.spi_write(&[0x1b; 0x00], delay)?;
-        self.spi_write(&[0xe0; 0x00], delay)?;
-        self.spi_write(&[0x6a; 0x80], delay)?;
-        self.spi_write(&[0x80; 0x00], delay)?;
+        self.spi_write(&[0x08, 0x80], delay)?;
+        self.spi_write(&[0x6e, 0x80], delay)?;
+        self.spi_write(&[0x80, 0x80], delay)?;
+        self.spi_write(&[0x68, 0x00], delay)?;
+        self.spi_write(&[0xd0, 0x00], delay)?;
+        self.spi_write(&[0x1b, 0x00], delay)?;
+        self.spi_write(&[0xe0, 0x00], delay)?;
+        self.spi_write(&[0x6a, 0x80], delay)?;
+        self.spi_write(&[0x80, 0x00], delay)?;
         self.spi_write(&[0x14, 0x80], delay)?;
 
         Ok(())
