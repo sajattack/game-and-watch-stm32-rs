@@ -22,4 +22,5 @@ nb = "1.1.0"
 embedded-display-controller = "0.2.0"
 tinybmp = "0.6.0"
 button-driver = { version = "0.2.2", features=["embedded_hal_old"] }
-fugit = { version = "0.3.7", features = ["defmt"] }
+rtic-monotonics = { version = "2.0.3", features = ["cortex-m-systick"] }
+rtic = { version = "2.1.1", features = ["cortex-m", "thumbv7-backend", "rtic-monotonics"] }

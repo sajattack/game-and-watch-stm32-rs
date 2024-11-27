@@ -1,9 +1,9 @@
 use stm32h7xx_hal::{
-    delay::Delay, prelude::*, rcc::{rec::{self, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiWord, SamplingEdge, OctospiModes}
+    prelude::*, rcc::{rec::{self, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiWord, SamplingEdge, OctospiModes},
+    delay::Delay,
 };
 use stm32h7xx_hal::pac::OCTOSPI1;
 use stm32h7xx_hal::gpio::{Pin, Alternate, PB2, PB1, PD12, PE2, PA1, PE11, AF9, AF11, PushPull};
-use embedded_hal::blocking::delay::DelayMs;
 use defmt::debug;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -32,7 +32,7 @@ enum FlashCommand {
 pub const JEDEC_ID: [u8; 3] = [0xc2, 0x25, 0x34];
 
 
-pub struct SpiFlash<'a> {
+pub struct SpiFlash {
     _sck: Pin<'B', 2, Alternate<9, PushPull>>,
     _d0: Pin<'B', 1, Alternate<11, PushPull>>,
     _d1: Pin<'D', 12, Alternate<9, PushPull>>,
@@ -40,10 +40,9 @@ pub struct SpiFlash<'a> {
     _d3: Pin<'A', 1, Alternate<9, PushPull>>,
     _nss: Pin<'E', 11, Alternate<11, PushPull>>,
     ospi: Octospi<OCTOSPI1>,
-    delay: &'a mut Delay,
 }
 
-impl<'a> SpiFlash<'a> {
+impl SpiFlash {
     pub fn new<'b>(
         _sck: Pin<'B', 2, Alternate<9, PushPull>>,
         _d0: Pin<'B', 1, Alternate<11, PushPull>>,
@@ -54,14 +53,9 @@ impl<'a> SpiFlash<'a> {
         ospi_periph: OCTOSPI1,
         clocks: &'b CoreClocks, 
         peripheral: rec::Octospi1,
-        delay: &'a mut Delay,
     ) -> Self {
-
-        
-        debug!("Peripheral clock: {}", clocks.per_ck());
-        let config = Config::new(32.MHz()).mode(OctospiMode::OneBit).sampling_edge(SamplingEdge::Falling).fifo_threshold(4).dummy_cycles(6);
+        let config = Config::new(16.MHz()).mode(OctospiMode::OneBit).sampling_edge(SamplingEdge::Falling).fifo_threshold(4).dummy_cycles(6);
         let mut ospi = ospi_periph.octospi_unchecked(config, clocks, peripheral);
-        debug!("Ospi clock: {}", Octospi::<OCTOSPI1>::kernel_clk_unwrap(clocks));
 
         Self {
             _sck,
@@ -71,23 +65,20 @@ impl<'a> SpiFlash<'a> {
             _d3,
             _nss,
             ospi,
-            delay,
         }
     }
 
-    pub fn init(&mut self) -> Result<(), Error> {
+    pub fn init<'a>(&mut self, delay: &'a mut Delay) -> Result<(), Error> {
         // reset
         self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RSTEN as u8), OctospiWord::None, OctospiWord::None, &[])
             .map_err(|e| Error::OspiError(e))?;
 
-        // FIXME is there a better rtic way for this?
-        self.delay.delay_ms(2u8);
+        delay.delay_ms(2u8);
 
         self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RST as u8), OctospiWord::None, OctospiWord::None, &[])
             .map_err(|e| Error::OspiError(e))?;
 
-        // FIXME ditto above
-        self.delay.delay_ms(20u8);
+        delay.delay_ms(20u8);
 
         // read jedec id
         let mut buf = [0u8; 3];
@@ -118,8 +109,7 @@ impl<'a> SpiFlash<'a> {
             self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WRSR as u8), OctospiWord::None, OctospiWord::None, &status_reg)
                 .map_err(|e| Error::OspiError(e))?;
 
-            // FIXME ditto above
-            self.delay.delay_ms(20u8);
+            delay.delay_ms(20u8);
 
             self.ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDSR as u8), OctospiWord::None, OctospiWord::None, 0, &mut status_reg)
                 .map_err(|e| Error::OspiError(e))?;
