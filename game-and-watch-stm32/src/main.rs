@@ -58,7 +58,7 @@ mod app {
 
     #[shared]
     struct SharedResources {
-        //audio: Sai<SAI1, I2S>,
+        audio: Sai<SAI1, I2S>,
         spiflash: SpiFlash,
     }
     #[local]
@@ -163,7 +163,6 @@ mod app {
         //).into();
 
         let sck = gpiob.pb13.into_alternate();
-        let miso = gpioc.pc2.into_alternate();
         let mosi = gpiob.pb15.into_alternate();
         let cs = gpiob.pb12.into_push_pull_output();
 
@@ -175,7 +174,7 @@ mod app {
         let mut enable_1v8  = gpiod.pd4.into_push_pull_output();
         let reset = gpiod.pd8.into_push_pull_output();
 
-        let spi = ctx.device.SPI2.spi((sck, miso, mosi), spi::MODE_0, 18.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
+        let spi = ctx.device.SPI2.spi((sck, spi::NoMiso, mosi), spi::MODE_0, 18.MHz(), ccdr.peripheral.SPI2, &ccdr.clocks);
 
         debug!("SPI clock {}", Spi::<stm32h7xx_hal::stm32::SPI2, spi::Enabled, u8>::kernel_clk(&ccdr.clocks).unwrap().raw());
 
@@ -206,10 +205,8 @@ mod app {
 
         let mut layer = ltdc.split();
 
-
         let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi);
         lcd.init(&mut delay).unwrap();
-
 
         let mut disp = BufferedDisplay::new(layer, unsafe{ crate::FRONT_BUFFER.as_mut() }, unsafe { crate::BACK_BUFFER.as_mut() }, WIDTH, HEIGHT);
 
@@ -227,50 +224,48 @@ mod app {
 
         spiflash.init(&mut delay).unwrap();
 
-        //let mut audio_enable = gpioe.pe3.into_push_pull_output_in_state(PinState::High);
+        let mut audio_enable = gpioe.pe3.into_push_pull_output_in_state(PinState::High);
 
-        //// Use PLL3_P for the SAI1 clock
-        //let sai1_rec = ccdr.peripheral.SAI1.kernel_clk_mux(Sai1ClkSel::Pll2P);
-        //let master_config =
-            //I2SChanConfig::new(I2SDir::Tx).set_frame_sync_active_high(true);
-        //let slave_config = I2SChanConfig::new(I2SDir::Rx)
-            //.set_sync_type(I2SSync::Internal)
-            //.set_frame_sync_active_high(true);
+        // Use PLL3_P for the SAI1 clock
+        let sai1_rec = ccdr.peripheral.SAI1.kernel_clk_mux(Sai1ClkSel::Pll2P);
+        let master_config =
+            I2SChanConfig::new(I2SDir::Tx).set_frame_sync_active_high(true);
+        let slave_config = I2SChanConfig::new(I2SDir::Rx)
+            .set_sync_type(I2SSync::Internal)
+            .set_frame_sync_active_high(true);
 
-        //let sai1_pins = (
-            //// pg7 doesn't exist afaik but the hal needs something here
-            //gpiog.pg7.into_alternate(),
-            //gpioe.pe5.into_alternate(),
-            //gpioe.pe4.into_alternate(),
-            //gpioe.pe6.into_alternate(),
-            //None::<Pin<'E', 3, Alternate<6>>>
-        //);
+        let sai1_pins = (
+            // pg7 doesn't exist afaik but the hal needs something here
+            gpiog.pg7.into_alternate(),
+            gpioe.pe5.into_alternate(),
+            gpioe.pe4.into_alternate(),
+            gpioe.pe6.into_alternate(),
+            None::<Pin<'E', 3, Alternate<6>>>
+        );
 
-        //let mut audio = ctx.device.SAI1.i2s_ch_a(
-            //sai1_pins,
-            //AUDIO_SAMPLE_HZ,
-            //I2SDataSize::BITS_24,
-            //sai1_rec,
-            //&ccdr.clocks,
-            //I2sUsers::new(master_config).add_slave(slave_config),
-        //);
+        let mut audio = ctx.device.SAI1.i2s_ch_a(
+            sai1_pins,
+            AUDIO_SAMPLE_HZ,
+            I2SDataSize::BITS_24,
+            sai1_rec,
+            &ccdr.clocks,
+            I2sUsers::new(master_config).add_slave(slave_config),
+        );
 
 
-        //// Setup cache
-        //// Sound breaks up without this enabled
-        //ctx.core.SCB.enable_icache();
+        // Setup cache
+        // Sound breaks up without this enabled
+        ctx.core.SCB.enable_icache();
 
-        ////audio.listen(SaiChannel::ChannelA, sai::Event::Data);
-        //audio.enable();
-        //audio.try_send(0, 0).unwrap();
+        audio.listen(SaiChannel::ChannelA, sai::Event::Data);
+        audio.enable();
+        audio.try_send(0, 0).unwrap();
 
-        //draw::spawn().unwrap();
-        //audio_tx::spawn().unwrap();
         
         info!("Startup complete!");
         (
             SharedResources {
-                //audio,
+                audio,
                 spiflash,
             },
             LocalResources {
@@ -280,27 +275,27 @@ mod app {
         )
     }
 
-    //#[task(binds=SAI1, shared=[audio, spiflash], local=[audio_pos])]
-    //#[task(shared=[audio, spiflash], local=[audio_pos])]
-    //async fn audio_tx(mut ctx: audio_tx::Context) {
-        //let mut buf_left = [0u8; 4];
-        //let mut buf_right = [0u8; 4];
+    #[task(binds=SAI1, shared=[audio, spiflash], local=[audio_pos])]
+    fn audio_tx(mut ctx: audio_tx::Context) {
+        let mut buf_left = [0u8; 4];
+        let mut buf_right = [0u8; 4];
 
-        //ctx.shared.spiflash.lock(|spiflash| {
-            //spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_left).unwrap();
-            //spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_right).unwrap();
-        //});
+        ctx.shared.spiflash.lock(|spiflash| {
+            spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_left).unwrap();
+            spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf_right).unwrap();
+        });
 
-        //ctx.shared.audio.lock(|audio| {
-            //audio.try_send(u32::from_le_bytes(buf_left), u32::from_le_bytes(buf_right)).unwrap();
-        //});
-        //if *ctx.local.audio_pos < AUDIO_SIZE -2 {
-            //*ctx.local.audio_pos += 2;
-        //}
-        //else {
-            //*ctx.local.audio_pos = 0;
-        //}
-    //}
+        ctx.shared.audio.lock(|audio| {
+            audio.try_send(u32::from_le_bytes(buf_left), u32::from_le_bytes(buf_right)).unwrap();
+        });
+        if *ctx.local.audio_pos < AUDIO_SIZE -2 {
+            *ctx.local.audio_pos += 2;
+        }
+        else {
+            *ctx.local.audio_pos = 0;
+        }
+        trace!("audio pos: {}", ctx.local.audio_pos);
+    }
 
     #[task(binds = LTDC, local = [display])]
     fn draw(ctx: draw::Context) {
