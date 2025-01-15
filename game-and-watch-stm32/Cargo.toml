@@ -24,3 +24,4 @@ tinybmp = "0.6.0"
 button-driver = { version = "0.2.2", features=["embedded_hal_old"] }
 rtic-monotonics = { version = "2.0.3", features = ["cortex-m-systick"] }
 rtic = { version = "2.1.1", features = ["cortex-m", "thumbv7-backend", "rtic-monotonics"] }
+fugit = "0.3.7"

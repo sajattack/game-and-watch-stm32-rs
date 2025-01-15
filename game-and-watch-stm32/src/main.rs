@@ -15,7 +15,7 @@ macro_rules! pins_alternate_high_speed {
 
 
 mod lcd;
-//mod input;
+mod input;
 mod spiflash;
 
 #[macro_use]
@@ -54,12 +54,15 @@ mod app {
 
     use crate::lcd::{self, *};
     use crate::spiflash::{self, *};
-    //use crate::input::*;
-
+    use crate::input::*;
+    
     #[shared]
     struct SharedResources {
         audio: Sai<SAI1, I2S>,
         spiflash: SpiFlash,
+        ferris_pos: Point,
+        buttons: Buttons,
+        lcd: Lcd,
     }
     #[local]
     struct LocalResources {
@@ -149,18 +152,18 @@ mod app {
         let pause = gpioc.pc13;
         let power = gpioa.pa0;
 
-        //let buttons: Buttons = ButtonPins::new(
-            //left.into(),
-            //right.into(),
-            //up.into(),
-            //down.into(), 
-            //a.into(),
-            //b.into(),
-            //game.into(),
-            //time.into(),
-            //pause.into(),
-            //power.into()
-        //).into();
+        let buttons: Buttons = ButtonPins::new(
+            left.into(),
+            right.into(),
+            up.into(),
+            down.into(), 
+            a.into(),
+            b.into(),
+            game.into(),
+            time.into(),
+            pause.into(),
+            power.into()
+        ).into();
 
         let sck = gpiob.pb13.into_alternate();
         let mosi = gpiob.pb15.into_alternate();
@@ -261,12 +264,16 @@ mod app {
         audio.enable();
         nb::block!(audio.try_send(0, 0)).unwrap();
 
+        let ferris_pos = Point::new(120, 125);
         
         info!("Startup complete!");
         (
             SharedResources {
                 audio,
                 spiflash,
+                ferris_pos,
+                buttons,
+                lcd,
             },
             LocalResources {
                 audio_pos: 0,
@@ -301,31 +308,63 @@ mod app {
         //trace!("audio pos: {}", ctx.local.audio_pos);
     //}
 
-    #[task(binds = LTDC, local = [display])]
-    fn draw(ctx: draw::Context) {
+    #[task(binds = LTDC, local = [display], shared = [ferris_pos, lcd, buttons])]
+    fn draw(mut ctx: draw::Context) {
         trace!("FRAME");
-        ctx.local.display.layer(|draw| {
-            draw.clear();
-            draw.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
 
-            let text_style =
-                MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
-            Text::new("Hello Rust!", Point::new(120, 100), text_style)
-                .draw(draw)
-                .unwrap();
+        ctx.shared.buttons.lock(|buttons|  {
+            ctx.shared.ferris_pos.lock(|ferris_pos| {
+                 ctx.shared.lcd.lock(|lcd|  {
+                    update(ferris_pos, buttons, lcd);
+                    ctx.local.display.layer(|draw| {
+                        draw.clear();
+                        draw.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
 
-            let ferris: Bmp<Rgb565> =
-                Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
-            let ferris = Image::new(&ferris, Point::new(120, 125));
-            ferris.draw(draw).unwrap();
+                        let text_style =
+                            MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
+                        Text::new("Hello Rust!", Point::new(120, 100), text_style)
+                            .draw(draw)
+                            .unwrap();
+
+                        let ferris: Bmp<Rgb565> =
+                            Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
+                        let ferris = Image::new(&ferris, *ferris_pos);
+                        ferris.draw(draw).unwrap();
+                    });
+                    ctx.local.display.swap_layer_wait();
+                });
+            });
         });
-        ctx.local.display.swap_layer_wait();
     }
 
     #[idle]
     fn idle(cx: idle::Context) -> ! {
         loop {
             cortex_m::asm::wfi();
+        }
+    }
+
+    
+    fn update(ferris_pos: &mut Point, buttons: &mut Buttons, lcd: &mut Lcd) {
+        let button_reading = buttons.raw_read_all();
+        let button_clicks = buttons.read_clicks();
+        buttons.reset_all();
+
+        if button_reading.left.is_held() {
+            ferris_pos.x -= 1;
+        }
+        if button_reading.right.is_held() {
+            ferris_pos.x += 1;
+        }
+        if button_reading.up.is_held() {
+            ferris_pos.y -= 1;
+        }
+        if button_reading.down.is_held() {
+            ferris_pos.y +=1;
+        }
+
+        if button_clicks.power {
+            lcd.toggle_backlight();
         }
     }
 }

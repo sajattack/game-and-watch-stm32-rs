@@ -13,6 +13,7 @@ pub struct Lcd {
     reset: Pin<'D', 8, Output<PushPull>>,
     cs: Pin<'B', 12, Output<PushPull>>,
     spi:  spi::Spi<SPI2, spi::Enabled, u8>,
+    backlight_state: bool,
 }
 
 impl Lcd {
@@ -35,6 +36,7 @@ impl Lcd {
             reset,
             cs,
             spi,
+            backlight_state: false,
         }
     }
 
@@ -108,5 +110,16 @@ impl Lcd {
         self.backlight1.set_high();
         self.backlight2.set_high();
         self.backlight3.set_high();
+    }
+
+    pub fn toggle_backlight(
+        &mut self
+    ) {
+        if self.backlight_state {
+            self.backlight_off();
+        } else {
+            self.backlight_on();
+        }
+        self.backlight_state = !self.backlight_state;
     }
 }
