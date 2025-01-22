@@ -33,7 +33,9 @@ mod app {
         sai::{
             self, I2SChanConfig, I2SDataSize, I2SDir, I2SSync, I2sUsers, Sai,
             SaiChannel, SaiI2sExt, I2S,
-        }, spi::{self, Spi}, time::Hertz, traits::i2s::FullDuplex
+        },
+        spi::{self, Spi}, time::Hertz, traits::i2s::FullDuplex,
+        timer::{Timer, Event},
     };
     use embedded_display_controller::{DisplayController, DisplayControllerLayer, DisplayConfiguration};
 
@@ -41,6 +43,8 @@ mod app {
     use embedded_graphics::mono_font::{ascii, MonoTextStyle};
     use embedded_graphics::prelude::*;
     use embedded_graphics::text::Text;
+
+    use fugit::Duration;
 
     use rtic_monotonics::systick::prelude::*;
 
@@ -54,7 +58,7 @@ mod app {
 
     use crate::lcd::{self, *};
     use crate::spiflash::{self, *};
-    use crate::input::*;
+    use crate::input::{self, *};
     
     #[shared]
     struct SharedResources {
@@ -152,7 +156,7 @@ mod app {
         let pause = gpioc.pc13;
         let power = gpioa.pa0;
 
-        let buttons: Buttons = ButtonPins::new(
+        let buttons: input::Buttons = input::ButtonPins::new(
             left.into(),
             right.into(),
             up.into(),
@@ -214,6 +218,9 @@ mod app {
 
         info!("Initialised Display...");
 
+        let mut timer = ctx.device.TIM2.timer(Hertz::from_duration(Duration::<u32, 1, 1000>::millis(2)/*input::TIMER_PERIOD.into()*/), ccdr.peripheral.TIM2, &ccdr.clocks);
+        // Generate an interrupt when the timer expires
+        timer.listen(Event::TimeOut);
 
         let mut spiflash = SpiFlash::new(
             gpiob.pb2.into(),
@@ -335,6 +342,12 @@ mod app {
                 });
             });
         });
+    }
+
+    // This is gross and needs a refactor
+    #[task(binds = TIM2)]
+    fn timer(ctx: timer::Context) {    
+        unsafe { input::GLOBAL_TIMER_COUNTER += input::TIMER_PERIOD }
     }
 
     #[idle]

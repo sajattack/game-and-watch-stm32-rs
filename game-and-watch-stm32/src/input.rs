@@ -1,14 +1,41 @@
 use button_driver::{Button, ButtonConfig, Mode, State, InstantProvider};
-use core::{ops::Sub};
+use core::{cell::RefCell, ops::Sub};
+use cortex_m::interrupt::Mutex;
 use stm32h7xx_hal::{
-    pac::{self, interrupt, Interrupt},
+    pac::{self, interrupt, Interrupt, TIM2},
     prelude::*,
-    timer::{Event},
+    timer::Event,
     gpio::{self, Pin, Input},
 };
+use core::time::Duration;
 use embedded_hal::digital::v2::InputPin;
-use fugit::{Instant, Duration};
 
+/// This setting affects how fast a button can track a state change.
+// Maximum resolution supported by the timer.
+pub const TIMER_PERIOD: Duration = Duration::from_millis(2);
+pub static mut GLOBAL_TIMER_COUNTER: Duration = Duration::from_millis(0);
+
+/// Retrieve the current time.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
+pub struct Instant {
+    counter: Duration,
+}
+
+impl Sub<Instant> for Instant {
+    type Output = Duration;
+
+    fn sub(self, rhs: Instant) -> Self::Output {
+        self.counter - rhs.counter
+    }
+}
+
+impl InstantProvider<Duration> for Instant {
+    fn now() -> Self {
+        Instant {
+            counter: unsafe { GLOBAL_TIMER_COUNTER },
+        }
+    }
+}
 
 pub struct ButtonPins {
     left: Pin<'D', 11, Input>,
@@ -24,7 +51,6 @@ pub struct ButtonPins {
 }
 
 impl ButtonPins {
-
     pub fn new(
         left: Pin<'D', 11, Input>,
         right: Pin<'D', 15, Input>,
@@ -53,16 +79,16 @@ impl ButtonPins {
 }
 
 pub struct Buttons {
-    pub left: Button<Pin<'D', 11, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub right: Button<Pin<'D', 15, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub up: Button<Pin<'D', 0, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub down: Button<Pin<'D', 14, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub a: Button<Pin<'D', 9, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub b: Button<Pin<'D', 5, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub game: Button<Pin<'C', 1, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub time: Button<Pin<'C', 4, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub pause: Button<Pin<'C', 13, Input>, Instant, Duration<u16, 1, 1000>>,
-    pub power: Button<Pin<'A', 0, Input>, Instant, Duration<u16, 1, 1000>>
+    pub left: Button<Pin<'D', 11, Input>, Instant>,
+    pub right: Button<Pin<'D', 15, Input>, Instant>,
+    pub up: Button<Pin<'D', 0, Input>, Instant>,
+    pub down: Button<Pin<'D', 14, Input>, Instant>,
+    pub a: Button<Pin<'D', 9, Input>, Instant>,
+    pub b: Button<Pin<'D', 5, Input>, Instant>,
+    pub game: Button<Pin<'C', 1, Input>, Instant>,
+    pub time: Button<Pin<'C', 4, Input>, Instant>,
+    pub pause: Button<Pin<'C', 13, Input>, Instant>,
+    pub power: Button<Pin<'A', 0, Input>, Instant>
 }
 
 
