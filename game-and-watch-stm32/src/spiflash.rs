@@ -1,5 +1,5 @@
 use stm32h7xx_hal::{
-    delay::Delay, dma::{mdma::{MdmaConfig, MdmaIncrement, StreamX, StreamsTuple}, MasterTransfer, PeripheralToMemory, Transfer}, pac::MDMA, prelude::*, rcc::{rec::{ self, Mdma, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiModes, OctospiWord, SamplingEdge},
+    delay::Delay, dma::{mdma::{MdmaConfig, MdmaIncrement, MdmaTransferRequest, MdmaTrigger, StreamX, StreamsTuple}, MasterTransfer, PeripheralToMemory, Transfer}, pac::MDMA, prelude::*, rcc::{rec::{ self, Mdma, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiModes, OctospiWord, SamplingEdge},
 };
 use stm32h7xx_hal::pac::OCTOSPI1;
 use stm32h7xx_hal::gpio::{Pin, Alternate, PB2, PB1, PD12, PE2, PA1, PE11, AF9, AF11, PushPull};
@@ -12,7 +12,7 @@ pub enum Error {
 }
 
 #[repr(u8)]
-enum FlashCommand {
+pub enum FlashCommand {
     CMD_WRSR = 0x01,
     CMD_READ = 0x03,
     CMD_RDSR = 0x05,
@@ -38,7 +38,9 @@ pub struct SpiFlash {
     _d2: Pin<'E', 2, Alternate<9, PushPull>>,
     _d3: Pin<'A', 1, Alternate<9, PushPull>>,
     _nss: Pin<'E', 11, Alternate<11, PushPull>>,
-    transfer: Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut[u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>
+    ospi: Octospi<OCTOSPI1>,
+    dp_mdma: MDMA,
+    p_mdma: Mdma, 
 }
 
 impl SpiFlash {
@@ -52,19 +54,11 @@ impl SpiFlash {
         ospi_periph: OCTOSPI1,
         clocks: &'b CoreClocks, 
         peripheral: rec::Octospi1,
-        spiflash_buffer: &'static mut [u32; crate::AUDIO_BUFFER_SIZE],
+        delay: &mut stm32h7xx_hal::delay::Delay,
         dp_mdma: MDMA,
         p_mdma: Mdma,
-        delay: &mut stm32h7xx_hal::delay::Delay,
     ) -> Self {
         let config = Config::new(16.MHz()).mode(OctospiMode::OneBit).sampling_edge(SamplingEdge::Falling).fifo_threshold(4).dummy_cycles(6);
-
-        let streams = StreamsTuple::new(dp_mdma, p_mdma);
-
-        let dmaconfig = MdmaConfig::default()
-            .transfer_complete_interrupt(true)
-            .source_increment(MdmaIncrement::Increment)
-            .destination_increment(MdmaIncrement::Increment);
 
         let mut ospi = ospi_periph.octospi_unchecked(config, clocks, peripheral);
 
@@ -150,6 +144,32 @@ impl SpiFlash {
             core::hint::spin_loop();
         }
 
+        Self {
+            _sck,
+            _d0,
+            _d1,
+            _d2,
+            _d3,
+            _nss,
+            ospi,
+            dp_mdma,
+            p_mdma,
+        }
+    }
+
+    pub fn begin_transfer(mut self, buffer: &'static mut [u32; crate::AUDIO_BUFFER_SIZE], transfer_pos: &mut usize) -> Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut [u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>
+{
+        self.ospi.begin_read_extended(OctospiWord::U8(FlashCommand::CMD_4READ as u8), OctospiWord::U24(*transfer_pos as u32), OctospiWord::None, 6, crate::AUDIO_BUFFER_SIZE*4);
+
+        let dmaconfig = MdmaConfig::default()
+            .transfer_complete_interrupt(true)
+            .source_increment(MdmaIncrement::Increment)
+            .destination_increment(MdmaIncrement::Increment)
+            .hardware_transfer_request(MdmaTransferRequest::Octospi1FtTrg)
+            .trigger_mode(MdmaTrigger::Buffer)
+            .buffer_length(16);
+
+        let streams = StreamsTuple::new(self.dp_mdma, self.p_mdma);
 
         let mut transfer: stm32h7xx_hal::dma::Transfer<
             _,
@@ -159,23 +179,15 @@ impl SpiFlash {
             _,
         > = stm32h7xx_hal::dma::Transfer::init_master(
             streams.0,
-            ospi,
-            spiflash_buffer,
+            self.ospi,
+            buffer,
             None,
             dmaconfig,
         );
 
         transfer.start(|_|{});
-
-        Self {
-            _sck,
-            _d0,
-            _d1,
-            _d2,
-            _d3,
-            _nss,
-            transfer,
-        }
+        transfer_pos.wrapping_add(crate::AUDIO_BUFFER_SIZE*4);
+        transfer
     }
-}
 
+}

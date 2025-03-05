@@ -24,7 +24,7 @@ mod utilities_display;
 use panic_probe as _;
 use core::mem::MaybeUninit;
 
-const AUDIO_BUFFER_SIZE: usize = 96;
+const AUDIO_BUFFER_SIZE: usize = 960;
 const VIDEO_BUFFER_SIZE: usize = lcd::WIDTH * lcd::HEIGHT;
 
 #[link_section = ".sram3"]
@@ -34,19 +34,17 @@ static mut BACK_BUFFER: MaybeUninit<[u16; VIDEO_BUFFER_SIZE]> = MaybeUninit::uni
 #[link_section = ".sram3"]
 static mut AUDIO_BUFFER: [u32; AUDIO_BUFFER_SIZE] = [0u32; AUDIO_BUFFER_SIZE];
 
+
 #[rtic::app( device = stm32h7xx_hal::stm32, peripherals = true )]
 mod app {
     use super::{AUDIO_BUFFER_SIZE, VIDEO_BUFFER_SIZE};
     use crate::{FRONT_BUFFER, BACK_BUFFER, AUDIO_BUFFER};
     use core::mem::MaybeUninit;
     use ltdc::Ltdc;
-    use stm32h7xx_hal::{gpio::{Alternate, Pin, PinState, Speed}, stm32::Interrupt, ltdc::{self, LtdcLayer1}, pac::{self, rcc::cdccipr::FMCSEL_A, SAI1}, prelude::*, rcc::rec::{Sai1ClkSel, Spi123ClkSel}, 
-        sai::{
+    use stm32h7xx_hal::{dma::{mdma::StreamX, MasterTransfer, PeripheralToMemory, Transfer}, gpio::{Alternate, Pin, PinState, Speed}, ltdc::{self, LtdcLayer1}, pac::{self, rcc::cdccipr::FMCSEL_A, OCTOSPI1, SAI1}, prelude::*, rcc::rec::{Mdma, Octospi1, Sai1ClkSel, Spi123ClkSel}, sai::{
             self, I2SChanConfig, I2SDataSize, I2SDir, I2SSync, I2sUsers, Sai,
             SaiChannel, SaiI2sExt, I2S,
-        },
-        spi::{self, Spi}, time::Hertz, traits::i2s::FullDuplex,
-        timer::{Timer, Event},
+        }, spi::{self, Spi}, stm32::Interrupt, time::Hertz, timer::{Event, Timer}, traits::i2s::FullDuplex, xspi::{Octospi, OctospiWord}
     };
     use embedded_display_controller::{DisplayController, DisplayControllerLayer, DisplayConfiguration};
 
@@ -70,21 +68,22 @@ mod app {
     use crate::lcd::{self, *};
     use crate::spiflash::{self, *};
     use crate::input::{self, *};
-    
+
     #[shared]
     struct SharedResources {
-        audio: Sai<SAI1, I2S>,
-        spiflash: SpiFlash,
-        ferris_pos: Point,
-        buttons: Buttons,
-        lcd: Lcd,
+        audio_buffer: [u32; AUDIO_BUFFER_SIZE]
     }
     #[local]
     struct LocalResources {
+        audio: Sai<SAI1, I2S>,
         audio_pos: usize,
+        transfer: Transfer<StreamX<pac::MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut [u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>,
         spiflash_pos: usize,
         display: BufferedDisplay<'static, LtdcLayer1>,
         timer: Timer<stm32h7xx_hal::stm32::TIM2>,
+        ferris_pos: Point,
+        buttons: Buttons,
+        lcd: Lcd,
     }
 
     const AUDIO_SAMPLE_HZ: Hertz = Hertz::from_raw(48_000);
@@ -239,7 +238,7 @@ mod app {
         // Generate an interrupt when the timer expires
         timer.listen(Event::TimeOut);
 
-        let mut spiflash = SpiFlash::new(
+        let spiflash = SpiFlash::new(
             gpiob.pb2.into(),
             gpiob.pb1.into(),
             gpiod.pd12.into(),
@@ -249,11 +248,15 @@ mod app {
             ctx.device.OCTOSPI1,
             &ccdr.clocks,
             ccdr.peripheral.OCTOSPI1,
-            unsafe { &mut AUDIO_BUFFER  },
+            &mut delay,
             ctx.device.MDMA,
             ccdr.peripheral.MDMA,
-            &mut delay,
         );
+
+        let mut spiflash_pos: usize = 0;
+
+        let mut transfer = spiflash.begin_transfer(unsafe { &mut AUDIO_BUFFER }, &mut spiflash_pos);
+        transfer.start(|_|{});
 
         let mut audio_enable = gpioe.pe3.into_push_pull_output_in_state(PinState::High);
 
@@ -297,76 +300,87 @@ mod app {
         info!("Startup complete!");
         (
             SharedResources {
+                audio_buffer: unsafe { AUDIO_BUFFER },
+            },
+            LocalResources {
                 audio,
-                spiflash,
+                audio_pos: 0, 
+                transfer,
+                spiflash_pos,
+                display: disp,
+                timer,
                 ferris_pos,
                 buttons,
                 lcd,
             },
-            LocalResources {
-                audio_pos: 0,
-                spiflash_pos: 0,
-                display: disp,
-                timer,
-            },
         )
     }
 
-    #[task(binds=SAI1, shared=[audio], local=[audio_pos])]
+    #[task(binds=SAI1, shared=[audio_buffer], local=[audio, audio_pos])]
     fn audio_tx(mut ctx: audio_tx::Context) {
-        ctx.shared.audio.lock(|audio| {
-            {
-                let value = unsafe { AUDIO_BUFFER[*ctx.local.audio_pos] };
-
-                nb::block!(audio.try_send(0, value)).unwrap();
-
-                if *ctx.local.audio_pos < AUDIO_BUFFER_SIZE - 1
-                {
-                    *ctx.local.audio_pos += 1;
-                }
-                else
-                {
-                    *ctx.local.audio_pos = 0;
-                }
-            }
+        let mut value: u32 = 0;
+        ctx.shared.audio_buffer.lock(|audio_buffer| {
+            value = audio_buffer[*ctx.local.audio_pos];
         });
+
+        nb::block!(ctx.local.audio.try_send(0, value)).unwrap();
+
+        if *ctx.local.audio_pos < AUDIO_BUFFER_SIZE - 1
+        {
+            *ctx.local.audio_pos += 1;
+        }
+        else
+        {
+            *ctx.local.audio_pos = 0;
+        }
         trace!("audio pos: {}", ctx.local.audio_pos);
     }
 
-    #[task(binds = LTDC, local = [display], shared = [ferris_pos, lcd, buttons])]
+    #[task(binds = LTDC, local = [display, ferris_pos, lcd, buttons])]
     fn draw(mut ctx: draw::Context) {
         trace!("FRAME");
 
-        ctx.shared.buttons.lock(|buttons|  {
-            ctx.shared.ferris_pos.lock(|ferris_pos| {
-                 ctx.shared.lcd.lock(|lcd|  {
-                    update(ferris_pos, buttons, lcd);
-                    ctx.local.display.layer(|draw| {
-                        draw.clear();
-                        draw.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
+        update(ctx.local.ferris_pos, ctx.local.buttons, ctx.local.lcd);
+        ctx.local.display.layer(|draw| {
+            draw.clear();
+            draw.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(320, 240)), RgbColor::RED).unwrap();
 
-                        let text_style =
-                            MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
-                        Text::new("Hello Rust!", Point::new(120, 100), text_style)
-                            .draw(draw)
-                            .unwrap();
+            let text_style =
+                MonoTextStyle::new(&ascii::FONT_9X18, RgbColor::WHITE);
+            Text::new("Hello Rust!", Point::new(120, 100), text_style)
+                .draw(draw)
+                .unwrap();
 
-                        let ferris: Bmp<Rgb565> =
-                            Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
-                        let ferris = Image::new(&ferris, *ferris_pos);
-                        ferris.draw(draw).unwrap();
-                    });
-                    ctx.local.display.swap_layer_wait();
-                });
-            });
+            let ferris: Bmp<Rgb565> =
+                Bmp::from_slice(include_bytes!("../assets/ferris.bmp")).unwrap();
+            let ferris = Image::new(&ferris, *ctx.local.ferris_pos);
+            ferris.draw(draw).unwrap();
         });
+        ctx.local.display.swap_layer_wait();
     }
 
     // This is gross and needs a refactor
-    #[task(binds = TIM2, local=[timer], shared=[buttons])]
+    #[task(binds = TIM2, local=[timer])]
     fn timer(mut ctx: timer::Context) {    
         unsafe { input::GLOBAL_TIMER_COUNTER += input::TIMER_PERIOD }
         ctx.local.timer.clear_irq();
+    }
+
+    #[task(binds = MDMA,  local=[transfer, spiflash_pos])]
+    fn spiflash_rx_complete(mut ctx: spiflash_rx_complete::Context) {
+        ctx.local.transfer.pause(|p| {
+            if *ctx.local.spiflash_pos >= /*0x9000_0000 +*/ AUDIO_SIZE -1
+            {
+                *ctx.local.spiflash_pos = 0;//0x9000_0000
+            }
+            else 
+            {
+                *ctx.local.spiflash_pos += AUDIO_BUFFER_SIZE * 4;
+            }
+            p.begin_read_extended(OctospiWord::U8(spiflash::FlashCommand::CMD_4READ as u8), OctospiWord::U24(*ctx.local.spiflash_pos as u32), OctospiWord::None, 6, crate::AUDIO_BUFFER_SIZE*4).unwrap();
+        });
+        ctx.local.transfer.clear_transfer_complete_interrupt();
+        ctx.local.transfer.start(|_|{});
     }
 
     #[idle]
