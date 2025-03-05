@@ -22,12 +22,23 @@ mod spiflash;
 mod utilities_display;
 
 use panic_probe as _;
+use core::mem::MaybeUninit;
 
-static mut FRONT_BUFFER: [u16; lcd::WIDTH * lcd::HEIGHT] = [0u16; lcd::WIDTH * lcd::HEIGHT];
-static mut BACK_BUFFER: [u16; lcd::WIDTH * lcd::HEIGHT] = [0u16; lcd::WIDTH * lcd::HEIGHT];
+const AUDIO_BUFFER_SIZE: usize = 96;
+const VIDEO_BUFFER_SIZE: usize = lcd::WIDTH * lcd::HEIGHT;
+
+#[link_section = ".sram3"]
+static mut FRONT_BUFFER: MaybeUninit<[u16; VIDEO_BUFFER_SIZE]> = MaybeUninit::uninit();
+#[link_section = ".sram3"]
+static mut BACK_BUFFER: MaybeUninit<[u16; VIDEO_BUFFER_SIZE]> = MaybeUninit::uninit();
+#[link_section = ".sram3"]
+static mut AUDIO_BUFFER: [u32; AUDIO_BUFFER_SIZE] = [0u32; AUDIO_BUFFER_SIZE];
 
 #[rtic::app( device = stm32h7xx_hal::stm32, peripherals = true )]
 mod app {
+    use super::{AUDIO_BUFFER_SIZE, VIDEO_BUFFER_SIZE};
+    use crate::{FRONT_BUFFER, BACK_BUFFER, AUDIO_BUFFER};
+    use core::mem::MaybeUninit;
     use ltdc::Ltdc;
     use stm32h7xx_hal::{gpio::{Alternate, Pin, PinState, Speed}, stm32::Interrupt, ltdc::{self, LtdcLayer1}, pac::{self, rcc::cdccipr::FMCSEL_A, SAI1}, prelude::*, rcc::rec::{Sai1ClkSel, Spi123ClkSel}, 
         sai::{
@@ -71,6 +82,7 @@ mod app {
     #[local]
     struct LocalResources {
         audio_pos: usize,
+        spiflash_pos: usize,
         display: BufferedDisplay<'static, LtdcLayer1>,
     }
 
@@ -214,7 +226,11 @@ mod app {
         let mut lcd = Lcd::new(pa4, pa5, pa6, disable_3v3, enable_1v8, reset, cs, spi);
         lcd.init(&mut delay).unwrap();
 
-        let mut disp = BufferedDisplay::new(layer, unsafe{ crate::FRONT_BUFFER.as_mut() }, unsafe { crate::BACK_BUFFER.as_mut() }, WIDTH, HEIGHT);
+        #[allow(static_mut_refs)]
+        let front_buffer: &'static mut [u16; VIDEO_BUFFER_SIZE] = unsafe { FRONT_BUFFER.assume_init_mut() };
+        let back_buffer: &'static mut [u16; VIDEO_BUFFER_SIZE] = unsafe { BACK_BUFFER.assume_init_mut() };
+
+        let mut disp = BufferedDisplay::new(layer, front_buffer, back_buffer, WIDTH, HEIGHT);
 
         info!("Initialised Display...");
 
@@ -229,9 +245,14 @@ mod app {
             gpioe.pe2.into(),
             gpioa.pa1.into(),
             gpioe.pe11.into(),
-            ctx.device.OCTOSPI1, &ccdr.clocks, ccdr.peripheral.OCTOSPI1);
-
-        spiflash.init(&mut delay).unwrap();
+            ctx.device.OCTOSPI1,
+            &ccdr.clocks,
+            ccdr.peripheral.OCTOSPI1,
+            unsafe { &mut AUDIO_BUFFER  },
+            ctx.device.MDMA,
+            ccdr.peripheral.MDMA,
+            &mut delay,
+        );
 
         let mut audio_enable = gpioe.pe3.into_push_pull_output_in_state(PinState::High);
 
@@ -262,7 +283,6 @@ mod app {
             I2sUsers::new(master_config).add_slave(slave_config),
         );
 
-
         // Setup cache
         // Sound breaks up without this enabled
         ctx.core.SCB.enable_icache();
@@ -284,36 +304,25 @@ mod app {
             },
             LocalResources {
                 audio_pos: 0,
+                spiflash_pos: 0,
                 display: disp,
             },
         )
     }
 
-    //#[task(binds=SAI1, shared=[audio, spiflash], local=[audio_pos])]
-    //fn audio_tx(mut ctx: audio_tx::Context) {
+    #[task(binds=SAI1, shared=[audio], local=[audio_pos])]
+    fn audio_tx(mut ctx: audio_tx::Context) {
+        ctx.shared.audio.lock(|audio| {
+            {
+                let value = unsafe { AUDIO_BUFFER[*ctx.local.audio_pos] };
 
-        //ctx.shared.audio.lock(|audio| {
-            //for _ in 0..48_000
-            //{
-                //let mut buf = [0u8; 2];
-                //ctx.shared.spiflash.lock(|spiflash| {
-                    //spiflash.read_bytes(*ctx.local.audio_pos as u32, &mut buf).unwrap();
-                //});
+                nb::block!(audio.try_send(0, value)).unwrap();
 
-                //let value = u16::from_le_bytes(buf);
-
-                //nb::block!(audio.try_send(0, value as u32)).unwrap();
-
-                //if *ctx.local.audio_pos < AUDIO_SIZE -2 {
-                    //*ctx.local.audio_pos += 2;
-                //}
-                //else {
-                    //*ctx.local.audio_pos = 0;
-                //}
-            //}
-        //});
-        //trace!("audio pos: {}", ctx.local.audio_pos);
-    //}
+                *ctx.local.audio_pos += 1;
+            }
+        });
+        trace!("audio pos: {}", ctx.local.audio_pos);
+    }
 
     #[task(binds = LTDC, local = [display], shared = [ferris_pos, lcd, buttons])]
     fn draw(mut ctx: draw::Context) {

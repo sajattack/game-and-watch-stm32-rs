@@ -1,6 +1,5 @@
 use stm32h7xx_hal::{
-    prelude::*, rcc::{rec::{self, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiWord, SamplingEdge, OctospiModes},
-    delay::Delay,
+    delay::Delay, dma::{mdma::{MdmaConfig, MdmaIncrement, StreamX, StreamsTuple}, MasterTransfer, PeripheralToMemory, Transfer}, pac::MDMA, prelude::*, rcc::{rec::{ self, Mdma, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiModes, OctospiWord, SamplingEdge},
 };
 use stm32h7xx_hal::pac::OCTOSPI1;
 use stm32h7xx_hal::gpio::{Pin, Alternate, PB2, PB1, PD12, PE2, PA1, PE11, AF9, AF11, PushPull};
@@ -39,7 +38,7 @@ pub struct SpiFlash {
     _d2: Pin<'E', 2, Alternate<9, PushPull>>,
     _d3: Pin<'A', 1, Alternate<9, PushPull>>,
     _nss: Pin<'E', 11, Alternate<11, PushPull>>,
-    ospi: Octospi<OCTOSPI1>,
+    transfer: Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut[u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>
 }
 
 impl SpiFlash {
@@ -53,50 +52,56 @@ impl SpiFlash {
         ospi_periph: OCTOSPI1,
         clocks: &'b CoreClocks, 
         peripheral: rec::Octospi1,
+        spiflash_buffer: &'static mut [u32; crate::AUDIO_BUFFER_SIZE],
+        dp_mdma: MDMA,
+        p_mdma: Mdma,
+        delay: &mut stm32h7xx_hal::delay::Delay,
     ) -> Self {
         let config = Config::new(16.MHz()).mode(OctospiMode::OneBit).sampling_edge(SamplingEdge::Falling).fifo_threshold(4).dummy_cycles(6);
+
+        let streams = StreamsTuple::new(dp_mdma, p_mdma);
+
+        let dmaconfig = MdmaConfig::default()
+            .transfer_complete_interrupt(true)
+            .source_increment(MdmaIncrement::Increment)
+            .destination_increment(MdmaIncrement::Increment);
+
         let mut ospi = ospi_periph.octospi_unchecked(config, clocks, peripheral);
 
-        Self {
-            _sck,
-            _d0,
-            _d1,
-            _d2,
-            _d3,
-            _nss,
-            ospi,
-        }
-    }
-
-    pub fn init<'a>(&mut self, delay: &'a mut Delay) -> Result<(), Error> {
         // reset
-        self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RSTEN as u8), OctospiWord::None, OctospiWord::None, &[])
-            .map_err(|e| Error::OspiError(e))?;
+        ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RSTEN as u8), OctospiWord::None, OctospiWord::None, &[])
+            .unwrap(); // FIXME
+            //.map_err(|e| Error::OspiError(e))?;
 
         delay.delay_ms(2u8);
 
-        self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RST as u8), OctospiWord::None, OctospiWord::None, &[])
-            .map_err(|e| Error::OspiError(e))?;
+        ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RST as u8), OctospiWord::None, OctospiWord::None, &[])
+            .unwrap(); // FIXME
+            //.map_err(|e| Error::OspiError(e))?;
 
         delay.delay_ms(20u8);
 
         // read jedec id
         let mut buf = [0u8; 3];
-        self.ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDID as u8), OctospiWord::None, OctospiWord::None, 0, &mut buf)
-           .map_err(|e| Error::OspiError(e))?;
+        ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDID as u8), OctospiWord::None, OctospiWord::None, 0, &mut buf)
+            .unwrap(); // FIXME
+           //.map_err(|e| Error::OspiError(e))?;
         if buf != JEDEC_ID {
-            return Err(Error::IdMismatch);
+            panic!("JEDEC ID Mismatch"); // FIXME
+            //return Err(Error::IdMismatch);
         }
 
         // enable writes
-        self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WREN as u8), OctospiWord::None, OctospiWord::None, &[])
-            .map_err(|e| Error::OspiError(e))?;
+        ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WREN as u8), OctospiWord::None, OctospiWord::None, &[])
+            .unwrap(); // FIXME
+            //.map_err(|e| Error::OspiError(e))?;
 
         let mut status_reg = [0u8; 1];
 
 
-        self.ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDSR as u8), OctospiWord::None, OctospiWord::None, 0, &mut status_reg)
-            .map_err(|e| Error::OspiError(e))?;
+        ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDSR as u8), OctospiWord::None, OctospiWord::None, 0, &mut status_reg)
+            .unwrap(); // FIXME
+            //.map_err(|e| Error::OspiError(e))?;
 
         debug!("status_reg original {}", status_reg);
 
@@ -106,18 +111,20 @@ impl SpiFlash {
 
             debug!("status_reg modified {}", status_reg);
 
-            self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WRSR as u8), OctospiWord::None, OctospiWord::None, &status_reg)
-                .map_err(|e| Error::OspiError(e))?;
+            ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WRSR as u8), OctospiWord::None, OctospiWord::None, &status_reg)
+                .unwrap(); // FIXME
+                //.map_err(|e| Error::OspiError(e))?;
 
             delay.delay_ms(20u8);
 
-            self.ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDSR as u8), OctospiWord::None, OctospiWord::None, 0, &mut status_reg)
-                .map_err(|e| Error::OspiError(e))?;
+            ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_RDSR as u8), OctospiWord::None, OctospiWord::None, 0, &mut status_reg)
+                .unwrap(); // FIXME
+                //.map_err(|e| Error::OspiError(e))?;
 
             debug!("status_reg readback {}", status_reg);
         }
 
-        self.ospi.configure_modes(
+        ospi.configure_modes(
             OctospiModes {
                instruction: OctospiMode::OneBit,
                address: OctospiMode::FourBit,
@@ -125,41 +132,50 @@ impl SpiFlash {
                data: OctospiMode::FourBit,
             }
         )
-            .map_err(|e| Error::OspiError(e))?;
+            .unwrap(); // FIXME
+            //.map_err(|e| Error::OspiError(e))?;
 
-        self.ospi.inner_mut().ccr.modify(|_, w| unsafe { 
+        ospi.inner_mut().ccr.modify(|_, w| unsafe { 
             w.sioo().set_bit()
         });
 
-        self.ospi.inner_mut().dcr1.modify(|_, w| unsafe { 
+        ospi.inner_mut().dcr1.modify(|_, w| unsafe { 
             w.csht().bits(4); 
             w.mtyp().bits(1);
             w.dlybyp().set_bit();
             w.devsize().bits(19)
         });
 
-        while self.ospi.is_busy().is_err() {
+        while ospi.is_busy().is_err() {
             core::hint::spin_loop();
         }
 
-        Ok(())
+
+        let mut transfer: stm32h7xx_hal::dma::Transfer<
+            _,
+            _,
+            stm32h7xx_hal::dma::PeripheralToMemory,
+            _,
+            _,
+        > = stm32h7xx_hal::dma::Transfer::init_master(
+            streams.0,
+            ospi,
+            spiflash_buffer,
+            None,
+            dmaconfig,
+        );
+
+        transfer.start(|_|{});
+
+        Self {
+            _sck,
+            _d0,
+            _d1,
+            _d2,
+            _d3,
+            _nss,
+            transfer,
+        }
     }
-
-
-    /// buf must be 32 bytes or less!
-    pub fn read_bytes(&mut self, addr: u32, buf: &mut [u8]) -> Result<(), Error> {
-        self.ospi.read_extended(OctospiWord::U8(FlashCommand::CMD_4READ as u8), OctospiWord::U24(addr), OctospiWord::None, 6, buf)
-            .map_err(|e| Error::OspiError(e))?;
-        Ok(())
-    }
-
-    /// buf must be 32 bytes or less!
-    pub fn write_bytes(&mut self, addr: u32, buf: &[u8]) -> Result<(), Error> {
-        self.ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_PP as u8), OctospiWord::U24(addr), OctospiWord::None, buf)
-            .map_err(|e| Error::OspiError(e))?;
-        Ok(())
-    }
-
-    // TODO: DMA!!!!
 }
 
