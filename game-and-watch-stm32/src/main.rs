@@ -84,6 +84,7 @@ mod app {
         audio_pos: usize,
         spiflash_pos: usize,
         display: BufferedDisplay<'static, LtdcLayer1>,
+        timer: Timer<stm32h7xx_hal::stm32::TIM2>,
     }
 
     const AUDIO_SAMPLE_HZ: Hertz = Hertz::from_raw(48_000);
@@ -306,6 +307,7 @@ mod app {
                 audio_pos: 0,
                 spiflash_pos: 0,
                 display: disp,
+                timer,
             },
         )
     }
@@ -318,7 +320,14 @@ mod app {
 
                 nb::block!(audio.try_send(0, value)).unwrap();
 
-                *ctx.local.audio_pos += 1;
+                if *ctx.local.audio_pos < AUDIO_BUFFER_SIZE - 1
+                {
+                    *ctx.local.audio_pos += 1;
+                }
+                else
+                {
+                    *ctx.local.audio_pos = 0;
+                }
             }
         });
         trace!("audio pos: {}", ctx.local.audio_pos);
@@ -354,9 +363,10 @@ mod app {
     }
 
     // This is gross and needs a refactor
-    #[task(binds = TIM2)]
-    fn timer(ctx: timer::Context) {    
+    #[task(binds = TIM2, local=[timer], shared=[buttons])]
+    fn timer(mut ctx: timer::Context) {    
         unsafe { input::GLOBAL_TIMER_COUNTER += input::TIMER_PERIOD }
+        ctx.local.timer.clear_irq();
     }
 
     #[idle]
@@ -368,9 +378,10 @@ mod app {
 
     
     fn update(ferris_pos: &mut Point, buttons: &mut Buttons, lcd: &mut Lcd) {
+        buttons.tick_all();
+
         let button_reading = buttons.raw_read_all();
         let button_clicks = buttons.read_clicks();
-        buttons.reset_all();
 
         if button_reading.left.is_held() {
             ferris_pos.x -= 1;
@@ -388,5 +399,7 @@ mod app {
         if button_clicks.power {
             lcd.toggle_backlight();
         }
+
+        //buttons.reset_all();
     }
 }

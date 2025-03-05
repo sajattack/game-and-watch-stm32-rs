@@ -154,8 +154,8 @@ impl From<ButtonPins> for Buttons {
     fn from(value: ButtonPins) -> Self {
         let fast_config = ButtonConfig::<Duration> {
             mode: Mode::PullUp,
-            hold: Duration::from_millis(100),
-            release: Duration::from_millis(50),
+            hold: Duration::from_millis(50),
+            release: Duration::from_millis(25),
             ..Default::default()
         };
 
