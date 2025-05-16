@@ -115,7 +115,6 @@ mod app {
 
     const AUDIO_SAMPLE_HZ: Hertz = Hertz::from_raw(48000);
     const PLL3_P_HZ: Hertz = Hertz::from_raw(AUDIO_SAMPLE_HZ.raw() * 257);
-    //const AUDIO_SIZE: usize = 368542;
 
     #[init]
     fn init(mut ctx: init::Context) -> (SharedResources, LocalResources) {
@@ -187,12 +186,10 @@ mod app {
         let sai1_rec = ccdr.peripheral.SAI1.kernel_clk_mux(Sai1ClkSel::Pll3P);
         let master_config =
             I2SChanConfig::new(I2SDir::Tx)
-            //.set_frame_sync_active_high(true)
             .set_mono_mode(true);
 
         let slave_config = I2SChanConfig::new(I2SDir::Rx)
             .set_sync_type(I2SSync::Internal)
-            //.set_frame_sync_active_high(true)
             .set_mono_mode(true);
 
         let sai1_pins = (
@@ -218,31 +215,29 @@ mod app {
         ctx.core.SCB.enable_icache();
 
 
-    // unmask interrupt handler for dma 1, stream 1
-    unsafe {
-        pac::NVIC::unmask(pac::Interrupt::DMA1_STR1);
-    }
+        // unmask interrupt handler for dma 1, stream 1
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::DMA1_STR1);
+        }
 
-    
-    dma1_str1.start(|sai1_rb| {
-        sai1.enable_dma(SaiChannel::ChannelA);
-        info!("sai1 fifo waiting to receive data");
-        while sai1_rb.cha().sr.read().flvl().is_empty() {}
-        info!("audio started");
-    });
-
-    sai1.listen(SaiChannel::ChannelA, sai::Event::Data);
-    sai1.enable();
-
-    sai1.try_send(0, 0).unwrap();
-    
-    unsafe {
-        #[allow(static_mut_refs)] // TODO: Fix this
-        TRANSFER_DMA1_STR1.write(Some(dma1_str1)); // drops previous None
-    }
-
-        let ferris_pos = Point::new(120, 125);
         
+        dma1_str1.start(|sai1_rb| {
+            sai1.enable_dma(SaiChannel::ChannelA);
+            info!("sai1 fifo waiting to receive data");
+            while sai1_rb.cha().sr.read().flvl().is_empty() {}
+            info!("audio started");
+        });
+
+        sai1.listen(SaiChannel::ChannelA, sai::Event::Data);
+        sai1.enable();
+
+        sai1.try_send(0, 0).unwrap();
+        
+        unsafe {
+            #[allow(static_mut_refs)]
+            TRANSFER_DMA1_STR1.write(Some(dma1_str1)); // drops previous None
+        }
+
         info!("Startup complete!");
         (
             SharedResources {
@@ -257,23 +252,18 @@ mod app {
 
     #[task(priority=16, binds=DMA1_STR1)]
     fn audio_tx(mut ctx: audio_tx::Context) {
-
-        #[allow(static_mut_refs)] // TODO: Fix this
+        #[allow(static_mut_refs)]
         let tx_buffer: &'static mut [u32; AUDIO_BUFFER_SIZE] =
             unsafe { AUDIO_BUFFER.assume_init_mut() };
 
-        #[allow(static_mut_refs)] // TODO: Fix this
+        #[allow(static_mut_refs)]
         if let Some(transfer) = unsafe { TRANSFER_DMA1_STR1.assume_init_mut() }
         {
             if transfer.get_transfer_complete_flag() {
                 transfer.clear_transfer_complete_interrupt();
             }
 
-            let mut index = 0;
-            while index < AUDIO_BUFFER_SIZE {
-                tx_buffer[index] = SINE_WAVE[index] as u32;
-                index += 1;
-            }
+            tx_buffer.copy_from_slice(&SINE_WAVE);
         }
     }
 }
