@@ -59,6 +59,11 @@ where
         mem::swap(&mut self.back_buffer, &mut self.front_buffer);
     }
 
+    pub fn is_swap_pending(&self) -> bool
+    {
+        self.layer.is_swap_pending()
+    }
+
     /// Swaps frame buffers then waits for the swap to occour on the next
     /// vertical blanking period
     pub fn swap_layer_wait(&mut self) {
