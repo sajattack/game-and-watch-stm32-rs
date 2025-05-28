@@ -4,6 +4,7 @@ use stm32h7xx_hal::{
 use stm32h7xx_hal::pac::OCTOSPI1;
 use stm32h7xx_hal::gpio::{Pin, Alternate, PB2, PB1, PD12, PE2, PA1, PE11, AF9, AF11, PushPull};
 use defmt::debug;
+use core::mem::MaybeUninit;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Error {
@@ -58,7 +59,13 @@ impl SpiFlash {
         dp_mdma: MDMA,
         p_mdma: Mdma,
     ) -> Self {
-        let config = Config::new(16.MHz()).mode(OctospiMode::OneBit).sampling_edge(SamplingEdge::Falling).fifo_threshold(4).dummy_cycles(6);
+        let config = Config::new(
+            16.MHz()
+        )
+            .mode(OctospiMode::OneBit)
+            .sampling_edge(SamplingEdge::Falling)
+            .fifo_threshold(16)
+            .dummy_cycles(6);
 
         let mut ospi = ospi_periph.octospi_unchecked(config, clocks, peripheral);
 
@@ -157,9 +164,9 @@ impl SpiFlash {
         }
     }
 
-    pub fn begin_transfer(mut self, buffer: &'static mut [u32; crate::AUDIO_BUFFER_SIZE], transfer_pos: &mut usize) -> Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut [u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>
+    pub fn begin_transfer<'a>(mut self, buffer: &'static mut MaybeUninit<[u32; crate::AUDIO_BUFFER_SIZE]>, transfer_pos: &mut usize) -> Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut MaybeUninit<[u32; crate::AUDIO_BUFFER_SIZE]>, MasterTransfer>
 {
-        self.ospi.begin_read_extended(OctospiWord::U8(FlashCommand::CMD_4READ as u8), OctospiWord::U24(*transfer_pos as u32), OctospiWord::None, 6, crate::AUDIO_BUFFER_SIZE*4);
+        self.ospi.begin_read_extended(OctospiWord::U8(FlashCommand::CMD_4READ as u8), OctospiWord::U24(*transfer_pos as u32), OctospiWord::None, 6, 8*4);
 
         let dmaconfig = MdmaConfig::default()
             .transfer_complete_interrupt(true)
@@ -186,8 +193,7 @@ impl SpiFlash {
         );
 
         transfer.start(|_|{});
-        transfer_pos.wrapping_add(crate::AUDIO_BUFFER_SIZE*4);
+        transfer_pos.wrapping_add(8*4);
         transfer
     }
-
 }

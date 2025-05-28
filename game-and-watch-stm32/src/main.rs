@@ -24,7 +24,9 @@ mod utilities_display;
 use panic_probe as _;
 use core::mem::MaybeUninit;
 
-use stm32h7xx_hal::{sai, stm32, dma::{mdma::StreamX, MasterTransfer, PeripheralToMemory, Transfer, self}};
+use stm32h7xx_hal::{dma::{self, mdma::StreamX, MasterTransfer, PeripheralToMemory, Transfer}, pac::{MDMA, OCTOSPI1},
+xspi::Octospi,
+sai, stm32};
 
 const AUDIO_BUFFER_SIZE: usize = 192;
 const VIDEO_BUFFER_SIZE: usize = lcd::WIDTH * lcd::HEIGHT;
@@ -45,6 +47,8 @@ type TransferDma1Str1 = dma::Transfer<
 >;
 
 static mut TRANSFER_DMA1_STR1: MaybeUninit<Option<TransferDma1Str1>> = MaybeUninit::uninit();
+
+static mut TRANSFER_SPIFLASH: MaybeUninit<Option<Transfer<StreamX<MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut MaybeUninit<[u32; crate::AUDIO_BUFFER_SIZE]>, MasterTransfer>>> = MaybeUninit::uninit();
 
 //#[link_section = ".sram3"]
 static SINE_WAVE: [u32; AUDIO_BUFFER_SIZE] = [
@@ -79,7 +83,7 @@ static SINE_WAVE: [u32; AUDIO_BUFFER_SIZE] = [
 #[rtic::app(device=stm32h7xx_hal::stm32, peripherals=true)]
 mod app {
     use super::{AUDIO_BUFFER_SIZE, VIDEO_BUFFER_SIZE};
-    use crate::{FRONT_BUFFER, BACK_BUFFER, AUDIO_BUFFER, SINE_WAVE, TRANSFER_DMA1_STR1};
+    use crate::{FRONT_BUFFER, BACK_BUFFER, AUDIO_BUFFER, SINE_WAVE, TRANSFER_DMA1_STR1, TRANSFER_SPIFLASH};
     use core::mem::MaybeUninit;
     use ltdc::Ltdc;
     use stm32h7xx_hal::{dma::{mdma::StreamX, MasterTransfer, PeripheralToMemory, Transfer, self}, gpio::{Alternate, Pin, PinState, Speed}, ltdc::{self, LtdcLayer1}, pac::{self, rcc::cdccipr::FMCSEL_A, OCTOSPI1, SAI1}, prelude::*, rcc::rec::{Mdma, Octospi1, Sai1ClkSel, Spi123ClkSel}, sai::{
@@ -117,8 +121,7 @@ mod app {
     struct LocalResources {
         sai1: Sai<SAI1, I2S>,
         audio_pos: usize,
-        //transfer: Transfer<StreamX<pac::MDMA, 0>, Octospi<OCTOSPI1>, PeripheralToMemory, &'static mut [u32; crate::AUDIO_BUFFER_SIZE], MasterTransfer>,
-        //spiflash_pos: usize,
+        spiflash_pos: usize,
         display: BufferedDisplay<'static, LtdcLayer1>,
         timer: Timer<stm32h7xx_hal::stm32::TIM2>,
         ferris_pos: Point,
@@ -305,10 +308,9 @@ mod app {
             ccdr.peripheral.MDMA,
         );
 
-        //let mut spiflash_pos: usize = 0;
+        let mut spiflash_pos: usize = 0;
 
-        //let mut transfer = spiflash.begin_transfer(unsafe { &mut AUDIO_BUFFER }, &mut spiflash_pos);
-        //transfer.start(|_|{});
+        unsafe { TRANSFER_SPIFLASH.write(Some(spiflash.begin_transfer(&mut AUDIO_BUFFER, &mut spiflash_pos))) };
 
         // configure dma1
         let dma1_streams = dma::dma::StreamsTuple::new(ctx.device.DMA1, ccdr.peripheral.DMA1);
@@ -399,7 +401,7 @@ mod app {
                 sai1,
                 audio_pos,
                 //transfer,
-                //spiflash_pos,
+                spiflash_pos,
                 display: disp,
                 timer,
                 ferris_pos,
@@ -420,7 +422,7 @@ mod app {
         if let Some(transfer) = unsafe { TRANSFER_DMA1_STR1.assume_init_mut() }
         {
             //tx_buffer.copy_from_slice(&SINE_WAVE);
-            let audio_pos = *ctx.local.audio_pos;
+            /*let audio_pos = *ctx.local.audio_pos;
             if (audio_pos < AUDIO_BUFFER_SIZE - 8)
             {
                 tx_buffer[0..8].copy_from_slice(&SINE_WAVE[audio_pos..(audio_pos+8)]);
@@ -432,6 +434,23 @@ mod app {
                 if transfer.get_transfer_complete_flag() {
                     transfer.clear_transfer_complete_interrupt();
                 }
+            }*/
+
+            if transfer.get_transfer_complete_flag() {
+                transfer.clear_transfer_complete_interrupt();
+            }
+        }
+
+    }
+
+    #[task(binds=MDMA, local=[spiflash_pos])]
+    fn spiflash_rx(mut ctx: spiflash_rx::Context)
+    {
+        #[allow(static_mut_refs)]
+        if let Some(transfer) = unsafe {  TRANSFER_SPIFLASH.assume_init_mut() }
+        {
+            if transfer.get_transfer_complete_flag() {
+                transfer.clear_transfer_complete_interrupt();
             }
         }
     }
