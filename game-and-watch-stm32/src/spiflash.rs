@@ -1,5 +1,5 @@
 use stm32h7xx_hal::{
-    delay::Delay, dma::{mdma::{MdmaConfig, MdmaIncrement, MdmaTransferRequest, MdmaTrigger, StreamX, StreamsTuple}, MasterTransfer, PeripheralToMemory, Transfer}, pac::MDMA, prelude::*, rcc::{rec::{ self, Mdma, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiModes, OctospiWord, SamplingEdge},
+    delay::Delay, dma::{mdma::{MdmaConfig, MdmaIncrement, MdmaTransferRequest, MdmaTrigger, StreamX, StreamsTuple}, MasterTransfer, PeripheralToMemory, Transfer}, gpio::Speed, pac::MDMA, prelude::*, rcc::{rec::{ self, Mdma, OctospiClkSel}, CoreClocks}, time::U32Ext, xspi::{Config, Octospi, OctospiError, OctospiMode, OctospiModes, OctospiWord, SamplingEdge}
 };
 use stm32h7xx_hal::pac::OCTOSPI1;
 use stm32h7xx_hal::gpio::{Pin, Alternate, PB2, PB1, PD12, PE2, PA1, PE11, AF9, AF11, PushPull};
@@ -46,12 +46,12 @@ pub struct SpiFlash {
 
 impl SpiFlash {
     pub fn new<'b>(
-        _sck: Pin<'B', 2, Alternate<9, PushPull>>,
-        _d0: Pin<'B', 1, Alternate<11, PushPull>>,
-        _d1: Pin<'D', 12, Alternate<9, PushPull>>,
-        _d2: Pin<'E', 2, Alternate<9, PushPull>>,
-        _d3: Pin<'A', 1, Alternate<9, PushPull>>,
-        _nss: Pin<'E', 11, Alternate<11, PushPull>>,
+        mut _sck: Pin<'B', 2, Alternate<9, PushPull>>,
+        mut _d0: Pin<'B', 1, Alternate<11, PushPull>>,
+        mut _d1: Pin<'D', 12, Alternate<9, PushPull>>,
+        mut _d2: Pin<'E', 2, Alternate<9, PushPull>>,
+        mut _d3: Pin<'A', 1, Alternate<9, PushPull>>,
+        mut _nss: Pin<'E', 11, Alternate<11, PushPull>>,
         ospi_periph: OCTOSPI1,
         clocks: &'b CoreClocks, 
         peripheral: rec::Octospi1,
@@ -64,10 +64,12 @@ impl SpiFlash {
         )
             .mode(OctospiMode::OneBit)
             .sampling_edge(SamplingEdge::Falling)
-            .fifo_threshold(16)
+            .fifo_threshold(8*4)
             .dummy_cycles(6);
 
         let mut ospi = ospi_periph.octospi_unchecked(config, clocks, peripheral);
+
+        ospi.configure_mode(OctospiMode::OneBit);
 
         // reset
         ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_RSTEN as u8), OctospiWord::None, OctospiWord::None, &[])
@@ -93,9 +95,9 @@ impl SpiFlash {
         }
 
         // enable writes
-        ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WREN as u8), OctospiWord::None, OctospiWord::None, &[])
-            .unwrap(); // FIXME
-            //.map_err(|e| Error::OspiError(e))?;
+        //ospi.write_extended(OctospiWord::U8(FlashCommand::CMD_WREN as u8), OctospiWord::None, OctospiWord::None, &[])
+            //.unwrap(); // FIXME
+            ////.map_err(|e| Error::OspiError(e))?;
 
         let mut status_reg = [0u8; 1];
 
@@ -136,20 +138,41 @@ impl SpiFlash {
             .unwrap(); // FIXME
             //.map_err(|e| Error::OspiError(e))?;
 
-        ospi.inner_mut().ccr.modify(|_, w| unsafe { 
-            w.sioo().set_bit()
+        //ospi.inner_mut().ccr.modify(|_, w| unsafe { 
+            //w.sioo().set_bit()
+        //});
+
+        ospi.inner_mut().cr.modify(|_, w| unsafe {
+            w.fmode().bits(3);
+            w.en().set_bit()
         });
 
         ospi.inner_mut().dcr1.modify(|_, w| unsafe { 
-            w.csht().bits(4); 
+            w.csht().bits(2); 
             w.mtyp().bits(1);
             w.dlybyp().set_bit();
-            w.devsize().bits(19)
+            w.devsize().bits(0x1b)
+        });
+
+        ospi.inner_mut().ccr.modify(|_, w| unsafe {
+            w.dmode().bits(1);
+            w.abmode().bits(0);
+            w.adsize().bits(3);
+            w.admode().bits(1);
+            w.isize().bits(0);
+            w.imode().bits(1)
         });
 
         while ospi.is_busy().is_err() {
             core::hint::spin_loop();
         }
+
+        _sck.set_speed(Speed::VeryHigh);
+        _d0.set_speed(Speed::VeryHigh);
+        _d1.set_speed(Speed::VeryHigh);
+        _d2.set_speed(Speed::VeryHigh);
+        _d3.set_speed(Speed::VeryHigh);
+        _nss.set_speed(Speed::VeryHigh);
 
         Self {
             _sck,
@@ -168,13 +191,14 @@ impl SpiFlash {
 {
         self.ospi.begin_read_extended(OctospiWord::U8(FlashCommand::CMD_4READ as u8), OctospiWord::U24(*transfer_pos as u32), OctospiWord::None, 6, 8*4);
 
+
         let dmaconfig = MdmaConfig::default()
             .transfer_complete_interrupt(true)
             .source_increment(MdmaIncrement::Increment)
             .destination_increment(MdmaIncrement::Increment)
-            .hardware_transfer_request(MdmaTransferRequest::Octospi1FtTrg)
+            .hardware_transfer_request(MdmaTransferRequest::Octospi1TcTrg)
             .trigger_mode(MdmaTrigger::Buffer)
-            .buffer_length(16);
+            .buffer_length(8*4);
 
         let streams = StreamsTuple::new(self.dp_mdma, self.p_mdma);
 

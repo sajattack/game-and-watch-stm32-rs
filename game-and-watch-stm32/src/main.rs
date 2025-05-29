@@ -308,7 +308,7 @@ mod app {
             ccdr.peripheral.MDMA,
         );
 
-        let mut spiflash_pos: usize = 0;
+        let mut spiflash_pos: usize = 0x0;
 
         unsafe { TRANSFER_SPIFLASH.write(Some(spiflash.begin_transfer(&mut AUDIO_BUFFER, &mut spiflash_pos))) };
 
@@ -373,6 +373,17 @@ mod app {
             pac::NVIC::unmask(pac::Interrupt::DMA1_STR1);
         }
 
+        // unmask interrupt handler for MDMA
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::MDMA);
+        }
+
+        // unmask interrupt handler for OCTOSPI
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::OCTOSPI1);
+        }
+
+
         
         dma1_str1.start(|sai1_rb| {
             sai1.enable_dma(SaiChannel::ChannelA);
@@ -435,6 +446,8 @@ mod app {
                     transfer.clear_transfer_complete_interrupt();
                 }
             }*/
+
+            debug!("{}: {}", ctx.local.audio_pos, tx_buffer[*ctx.local.audio_pos as usize .. *ctx.local.audio_pos as usize+8]);
 
             if transfer.get_transfer_complete_flag() {
                 transfer.clear_transfer_complete_interrupt();

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Programming SPI flash..."
-if ! openocd -f "openocd/target_mario.cfg" -f "openocd/interface_cmsis-dap.cfg" \
+if ! openocd -f "openocd/target_mario.cfg" -f "openocd/interface_jlink.cfg" \
     -c "init;" \
     -c "reset halt;" \
     -c "program ./game-and-watch-stm32/assets/crab_rave.raw_s16le_pcm_48k 0x90000000 verify;" \
